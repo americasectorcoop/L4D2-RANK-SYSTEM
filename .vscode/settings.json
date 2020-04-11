@@ -1,0 +1,15 @@
+{
+  "sourcepawnLanguageServer.trace.server": "verbose",
+  "sourcepawnLanguageServer.sourcemod_home": "/home/alejandro/repositories/KARMA-SYSTEM/include/karma",
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/CVS": true,
+    "**/.DS_Store": true,
+    "**/include/*.inc": true,
+    "**/compile": true,
+    "**/spcomp*": true
+  }
+}
+// file_path_new, "-D", compile_path, "-v 0", "-i"

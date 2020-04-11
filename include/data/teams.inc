@@ -1,0 +1,2 @@
+#define TEAM_SURVIVORS 2
+#define TEAM_INFECTED 3
