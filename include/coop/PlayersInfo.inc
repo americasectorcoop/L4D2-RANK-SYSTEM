@@ -1,4 +1,5 @@
 enum struct PlayersInfo {
+  int id;
   char name[MAX_NAME_LENGTH];
   char authid[32];
   char ipv4[16];
@@ -169,6 +170,7 @@ enum struct PlayersInfo {
       }
       admin_id.SetFlag(flag, true);
     }
+    RunAdminCacheChecks(this.id);
   }
 }
 
@@ -209,6 +211,7 @@ public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, 
         KickClient(client, "%s\n\nYou have been banned because: %s,\n\n Please visit: %s", hostname, reason, BANS_URL);
         return;
       }
+      Players[client].id = client;
       Players[client].kill_bosses = results.FetchInt(2);
       Players[client].factor = results.FetchFloat(3);
       Players[client].points = results.FetchInt(4);
@@ -220,6 +223,7 @@ public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, 
       int immunity = results.FetchInt(9);
       Players[client].assignFlags(flags, immunity);
       PlayerAnnounceConnection(client);
+      GrantPlayerColor(client);
     }
   }
   while (results.FetchMoreResults()) {}

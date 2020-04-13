@@ -169,7 +169,7 @@ public void OnPluginStart() {
 	HookEvent("round_end", eventRoundEnd);
 	HookEvent("molotov_thrown", eventMolotovThrown);
 	HookEvent("melee_kill", eventMeleeKill);
-	HookEvent("tank_spawn", eventTankSpawn);
+	HookEvent("tank_spawn", eventTankSpawn); 
 	HookEvent("tank_killed", eventTankKilled);
 
 
@@ -210,11 +210,12 @@ public void OnPluginStart() {
 	l4d2_difficulty_multiplier = CreateConVar("l4d2_difficulty_multiplier", "1.2", "");
 
 	// WE FORCE TO RUNNING MAP START EVENT WHEN PLUGIN IS LOADED/RELOADED
-	CreateTimer(1.0, MapStart);
+	// CreateTimer(1.0, MapStart);
 }
 
 void OnDatabaseConnected() {
 	PrintToServer("Conexión a base de datos exitosa");
+	// OnMapStart();
 }
 
 public Action cmdFrags(int client, int args) {
@@ -258,16 +259,16 @@ public Action cmdMute(int client, int args) {
 	return Plugin_Handled;
 }
 
-public void GetRankTotal(Handle owner, Handle hndl, const char[] error, any data) {
-	if (hndl != null) {
-		if(StrEqual(error, "")) {
-			while (SQL_FetchRow(hndl)) {
-				g_iRegisteredPlayers = SQL_FetchInt(hndl, 0);
-			}
-		} else {
-			LogError("(GetRankTotal)-> SQL Error: %s >>> %s", error, data);
+public void GetRankTotal(Database db, DBResultSet results, const char[] error, any data) {
+	if (db == null || results == null) {
+		LogError("Query failed! %s", error);
+		SetFailState("(OnPlayerFetch) Something is wrong: %s", error);
+	} else {
+		while (results.FetchRow()) {
+			g_iRegisteredPlayers = results.FetchInt(0);
 		}
 	}
+	while (results.FetchMoreResults()) {}
 }
 
 public void OnClientDisconnect(int client) {
@@ -399,9 +400,9 @@ public void updateptystatslayers() {
 	}
 }
 
-public Action MapStart(Handle timer) {
-	OnMapStart();
-}
+// public Action MapStart(Handle timer) {
+	// OnMapStart();
+// }
 
 public void OnMapStart() {
 	// g_roundsMap = 1;
@@ -412,7 +413,10 @@ public void OnMapStart() {
 	g_iFailedAttempts = 0;
 	char query[256];
 	Format(query, sizeof(query), "CALL PLAYER_COUNT();");
-	SQL_TQuery(g_database, GetRankTotal, query, _, DBPrio_High);
+	// SQL_TQuery(g_database, GetRankTotal, query, _, DBPrio_High);
+	if(g_database != null) {
+		g_database.Query(GetRankTotal, query, _, DBPrio_High);
+	}
 }
 
 public Action eventTankSpawn(Event event, const char[] name, bool dontBroadcast) {
@@ -465,7 +469,7 @@ public Action eventRoundEnd(Event event, const char[] name, bool dontBroadcast) 
  * Al ingresar el cliente
  * @param client
  */
-public void OnClientAuthorized(int client) {
+public void OnClientPostAdminCheck(int client) {
 	// Verificando que sea una entidad valida
 	if (IsValidEntity(client)) {
 		// Verificando que el jugador sea real
@@ -592,17 +596,17 @@ public Action eventPlayerDeath(Event event, const char[] name, bool dontBroadcas
 				}
 			} else {
 				// al ser asesinado un jugador por un enemigo xD
-				if(victim > 0) {
-					// Guardando el grupo de la victima
-					if(GetClientTeam(attacker) == TEAM_INFECTED) {
-						int special_infected = GetEntProp(attacker, Prop_Send, "m_zombieClass");
-						CPrintToChatAll("Zombie Class: %d", special_infected);
-					}
-				} else {
-					char VictimName[MAX_LINE_WIDTH];
-					event.GetString("victimname", VictimName, sizeof(VictimName));
-					PrintToChatAll("%s", VictimName);
-				}
+				// if(victim > 0) {
+				// 	// Guardando el grupo de la victima
+				// 	if(GetClientTeam(attacker) == TEAM_INFECTED) {
+				// 		int special_infected = GetEntProp(attacker, Prop_Send, "m_zombieClass");
+				// 		CPrintToChatAll("Zombie Class: %d", special_infected);
+				// 	}
+				// } else {
+				// 	char VictimName[MAX_LINE_WIDTH];
+				// 	event.GetString("victimname", VictimName, sizeof(VictimName));
+				// 	PrintToChatAll("%s", VictimName);
+				// }
 			}
 		}
 	}
@@ -1192,6 +1196,9 @@ void ShowRank(int client)
 				Format(Value, sizeof(Value), "Ranking of %N", client, client);
 				rank.DrawText(Value);
 
+				Format(Value, sizeof(Value), "===========================");
+				rank.DrawText(Value);
+
 				Format(Value, sizeof(Value), "Rank: %i of %i", Players[client].rank, g_iRegisteredPlayers);
 				rank.DrawText(Value);
 
@@ -1246,6 +1253,9 @@ void ShowRank(int client)
 
 
 				Format(Value, sizeof(Value), "For full stats visit:\n%s", WEBSITE_STATS);
+				rank.DrawText(Value);
+
+				Format(Value, sizeof(Value), "===========================");
 				rank.DrawText(Value);
 
 				Format(Value, sizeof(Value), "Show full stats", client);
@@ -2296,11 +2306,11 @@ public Action cmdRank(int client, int args) {
 			ShowRankTarget(client, target);
 		}
 		else {
-			if(Players[client].rank == 0) {
-				if(!CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-					PlayerFetch(client);
-				}
-			}
+			// if(Players[client].rank == 0) {
+				// if(!CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
+					// PlayerFetch(client);
+				// }
+			// }
 			ShowRank(client);
 		}
 			

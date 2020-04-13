@@ -225,10 +225,10 @@ public void CoopAutoDiffOnPluginStart()
 
 	hm_auto_tongue_range_min = CreateConVar("hm_auto_tongue_range_min", "750", "", _FCVAR_PLUGIN_);
 	hm_auto_tongue_range_max = CreateConVar("hm_auto_tongue_range_max", "2500", "", _FCVAR_PLUGIN_);	
-	hm_auto_tongue_miss_delay_min = CreateConVar("hm_auto_tongue_miss_delay_min", "5", "Минимальное время перезарядки языка при промахе.", _FCVAR_PLUGIN_);
-	hm_auto_tongue_miss_delay_max = CreateConVar("hm_auto_tongue_miss_delay_max", "15", "Максимальное время перезарядки языка при промахе.", _FCVAR_PLUGIN_);
-	hm_auto_tongue_hit_delay_min = CreateConVar("hm_auto_tongue_hit_delay_min", "5", "Минимальное время перезарядки языка, после отпускания (не важно по какой причине) предыдущей жертвы.", _FCVAR_PLUGIN_);
-	hm_auto_tongue_hit_delay_max = CreateConVar("hm_auto_tongue_hit_delay_max", "20", "Максимальное время перезарядки языка, после отпускания (не важно по какой причине) предыдущей жертвы.", _FCVAR_PLUGIN_);
+	hm_auto_tongue_miss_delay_min = CreateConVar("hm_auto_tongue_miss_delay_min", "5", "Minimum tongue reload time when missed.", _FCVAR_PLUGIN_);
+	hm_auto_tongue_miss_delay_max = CreateConVar("hm_auto_tongue_miss_delay_max", "15", "Maximum tongue reload time during miss", _FCVAR_PLUGIN_);
+	hm_auto_tongue_hit_delay_min = CreateConVar("hm_auto_tongue_hit_delay_min", "5", "The minimum time for reloading the tongue after releasing (no matter for what reason) the previous victim.", _FCVAR_PLUGIN_);
+	hm_auto_tongue_hit_delay_max = CreateConVar("hm_auto_tongue_hit_delay_max", "20", "The maximum time for reloading the tongue after releasing (no matter for what reason) the previous victim.", _FCVAR_PLUGIN_);
 	hm_auto_tongue_choke_dmg_min = CreateConVar("hm_auto_tongue_choke_dmg_min", "24", "", _FCVAR_PLUGIN_);
 	hm_auto_tongue_choke_dmg_max = CreateConVar("hm_auto_tongue_choke_dmg_max", "67", "", _FCVAR_PLUGIN_);
 	hm_auto_tongue_drag_dmg_min = CreateConVar("hm_auto_tongue_drag_dmg_min", "9", "", _FCVAR_PLUGIN_);
@@ -385,7 +385,9 @@ public void CoopAutoDiffOnPluginStart()
 	RegAdminCmd("sm_swdoff", Command_swdoff, ADMFLAG_GENERIC, "sm_swdoff");
 	
 	sv_maxplayers = FindConVar("sv_maxplayers");
-	HookConVarChange(sv_maxplayers, cvar_maxplayers_changed);
+	if(sv_maxplayers != null) {
+		HookConVarChange(sv_maxplayers, cvar_maxplayers_changed);
+	}
 	
 	// RegConsoleCmd("say", cmd_Say);
 	// RegConsoleCmd("say_team", cmd_Say);

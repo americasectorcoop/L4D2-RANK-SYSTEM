@@ -16,7 +16,7 @@ public void vStartSQL()
 
 public void vGotDatabase(Database database, const char[] error, any data)
 {
-	if (database == null) {
+	if (database == null || !StrEqual(error, "")) {
 		LogError("Failed to connect to database: %s", error);
 		SetFailState("Failed to connect to database: %s", error);
 	}
