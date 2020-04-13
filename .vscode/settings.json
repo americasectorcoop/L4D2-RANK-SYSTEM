@@ -12,4 +12,3 @@
     "**/spcomp*": true
   }
 }
-// file_path_new, "-D", compile_path, "-v 0", "-i"

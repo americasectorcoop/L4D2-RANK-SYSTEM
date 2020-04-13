@@ -27,7 +27,7 @@
 #include <colors>
 #include <data/zombieClass>
 #include <data/teams>
-#include <coop/skillsConstants>
+#include <stats/database>
 
 #define DEBUG true
 
@@ -37,16 +37,10 @@
 
 #define _FCVAR_PLUGIN_ 0
 
-#define DAY "10/06/2018"
-#define VERSION "5.0.0" 
+#define VERSION "5.0.0"
 
-#define WEBSITE_STATS "http://americasectorcoop.org/stats" 
-
-#define ON_BAN_TIME 300 // Time on minutes
-#define ON_BAN_REASON "Friendly Fire"
-#define ON_BAN_MESSAGE "You has been bannned by \"Friendly fire\".\nIf you think was an error please talk with us via discord."
-
-#define DB_CONF_NAME "stats"
+#define WEBSITE_STATS "http://l4d.dev/stats"
+#define BANS_URL "l4d.dev/bans"
 
 #define TROPHY false
 
@@ -65,17 +59,9 @@
 #define VOMIT_TK_BLOCK_MIN 70
 #define VOMIT_TK_BLOCK_MAX 240
 
-// #define SOUND_MAPTIME_START "level/countdown.wav"
+#define SOUND_MAPTIME_START "level/countdown.wav"
 #define SOUND_MAPTIME_FINISH "level/bell_normal.wav"
-#define SOUND_JOIN "ui/beepclear.wav" 
-
-
-
-
-int g_iPlayerCounters[MAXPLAYERS + 1][MAX_LENGTH_SKILLS];
-float g_playerAssistanceFactor[MAXPLAYERS + 1];
-char g_playerSteamId[MAXPLAYERS + 1][MAX_LINE_WIDTH];
-
+#define SOUND_JOIN "ui/beepclear.wav"
 
 int g_iTankDamage[MAXPLAYERS + 1][MAXPLAYERS + 1];
 int g_iTankHealth[MAXPLAYERS + 1];
@@ -98,9 +84,6 @@ int g_iTkBlockMax = 240;
 float g_fRankSum = 0.0;
 float g_fMapTimingStartTime = -1.0;
 
-Database g_dbConnection = null;
-Handle g_hJoinTimer[MAXPLAYERS+1];
-
 bool g_pointsEnabled = true;
 bool g_isPrint = false;
 bool g_isRoundStarted = false;
@@ -121,44 +104,27 @@ ConVar cvar_Tank;
 ConVar SDifficultyMultiplier;
 ConVar l4d2_difficulty_multiplier;
 
-DBResultSet playerData;
+// DBResultSet playerData;
 
 #include <coop/stock>
+#include <coop/PlayersInfo>
 #include <coop/autodifficulty>
 #include <coop/damage>
 
+
 public Plugin myinfo = {
-	name = "Stats with autodifficulty for AMERICA SECTOR COOP",
-	author = "Alejandro Suárez",
-	description = "Rank System with autodifficulty for ASC",
+	name = "Rank System",
+	author = "Aleexxx",
+	description = "Player ranks with autodifficulty",
 	version = VERSION,
-	url = "https://www.americasectorcoop.org"
-}
-
-public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
-	CreateNative("TYSTATS_GetPoints", Native_TYSTATS_GetPoints);
-	CreateNative("TYSTATS_GetRank", Native_TYSTATS_GetRank);
-	CreateNative("TYSTATS_GetPlayTime", Native_TYSTATS_GetPlayTime);
-	return APLRes_Success;
-}
-
-public int Native_TYSTATS_GetPoints(Handle plugin, int numParams) {
-	return g_iPlayerCounters[GetNativeCell(1)][PLAYER_POINTS];
-}
-
-public int Native_TYSTATS_GetRank(Handle plugin, int numParams) {
-	return g_iPlayerCounters[GetNativeCell(1)][PLAYER_RANK];
-}
-
-public int Native_TYSTATS_GetPlayTime(Handle plugin, int numParams) {
-	return g_iPlayerCounters[GetNativeCell(1)][PLAYER_PLAYTIME];
+	url = "https://l4d.dev/about/rank-system"
 }
 
 public void OnPluginStart() {
 	LoadTranslations("common.phrases");
 	LoadTranslations("tystats.phrases");
 
-	vConnectDatabase();
+	vStartSQL();
 
 	CoopAutoDiffOnPluginStart();
 	DamageOnPluginStart();
@@ -247,6 +213,10 @@ public void OnPluginStart() {
 	CreateTimer(1.0, MapStart);
 }
 
+void OnDatabaseConnected() {
+	PrintToServer("Conexión a base de datos exitosa");
+}
+
 public Action cmdFrags(int client, int args) {
 	printTotalFrags(client);
 }
@@ -308,12 +278,7 @@ public void OnClientDisconnect(int client) {
 
 		DMOnClientDisconnect(client);
 
-		if (g_hJoinTimer[client] != null) {
-			KillTimer(g_hJoinTimer[client]);
-			g_hJoinTimer[client] = null;
-		}
-
-		resetVariables(client);
+		PlayerReset(client);
 		
 		g_iTankDamage[client][0] = 0;
 		
@@ -397,101 +362,25 @@ public void UpdatePlayersStats() {
 	for (int i = 1; i <= MaxClients; i++) {
 		// Verificando que cliente sea real
 		if(IsRealClient(i)) {
-			char sqlcode[2048];
-			Format(sqlcode, 2048, buildQueryPlayerUpdate(i));
-			resetVariables(i);
-			transaction.AddQuery(sqlcode);
+			transaction.AddQuery(Players[i].getQuery());
+			PlayerReset(i);
 		}
 	}
-	g_dbConnection.Execute(transaction, onPlayerUpdated, OnUpdatePlayersStatsFailure, _, DBPrio_High);
+	g_database.Execute(transaction, onPlayerUpdated, OnUpdatePlayersStatsFailure, _, DBPrio_High);
 }
 
 public void updatePlayer(int client) {
 	if(IsRealClient(client)) {
 		// Instanciando metodo de trasaction
 		Transaction transaction = new Transaction();
-		char sqlcode[2048];
-		Format(sqlcode, 2048, buildQueryPlayerUpdate(client));
-		resetVariables(client);
-		transaction.AddQuery(sqlcode);
-		g_dbConnection.Execute(transaction, onPlayerUpdated, threadFailure, client, DBPrio_High);
+		transaction.AddQuery(Players[client].getQuery());
+		PlayerReset(client);
+		g_database.Execute(transaction, onPlayerUpdated, threadFailure, client, DBPrio_High);
 	}
 }
 
 public void onPlayerUpdated(Database db, int client, int numQueries, DBResultSet[] results, any[] queryData) {
 	
-}
-
-char buildQueryPlayerUpdate(int client) {
-	// Variable para tiempo de juego
-	int iClientPlaytime = GetTime() - g_iPlayerCounters[client][PLAYER_START_TIME];
-	// Inicializando variables para guardar el query y el steam id
-	char sqlcode[2048], SteamID[MAX_LINE_WIDTH];
-	// Obteniendo el steam id
-	GetClientAuthId(client, AuthId_Steam2, SteamID, sizeof(SteamID));
-	// Formateando query
-	Format(sqlcode, 2048, "CALL PLAYER_UPDATE ('%s', %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d);",
-		SteamID, // Steam id del jugador
-		g_iPlayerCounters[client][PLAYER_BOXES_OPEN],
-		g_iPlayerCounters[client][PLAYER_BOXES_SPECIALS_OPEN],
-		g_iPlayerCounters[client][PLAYER_COUNTER_BH],
-		g_iPlayerCounters[client][PLAYER_COUNTER_COMMANDS],
-		g_iPlayerCounters[client][PLAYER_COUNTER_LVP],
-		g_iPlayerCounters[client][PLAYER_COUNTER_MESSAGES],
-		g_iPlayerCounters[client][PLAYER_COUNTER_MVP],
-		g_iPlayerCounters[client][PLAYER_COUNTER_SUICIDE],
-		g_iPlayerCounters[client][PLAYER_COUNTER_WITCH_DISTURB],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_ABOVE],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_ADRENALINE_GIVEN],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_CURED],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_DAMAGE],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_INCAPPED],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_KILLED],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_PILLS_GIVEN],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_PROTECTED],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_RESCUED],
-		g_iPlayerCounters[client][PLAYER_FRIENDS_REVIVED],
-		g_iPlayerCounters[client][PLAYER_GIFT_TAKEN],
-		g_iPlayerCounters[client][PLAYER_HEADSHOTS],
-		g_iPlayerCounters[client][PLAYER_INFECTED_LET_IN_SAFEHOUSE],
-		g_iPlayerCounters[client][PLAYER_KILL_BOOMERS],
-		g_iPlayerCounters[client][PLAYER_KILL_BOSSES],
-		g_iPlayerCounters[client][PLAYER_KILL_CHARGERS],
-		g_iPlayerCounters[client][PLAYER_KILL_HUNTERS],
-		g_iPlayerCounters[client][PLAYER_KILL_JOCKEYS],
-		g_iPlayerCounters[client][PLAYER_KILL_SMOOKERS],
-		g_iPlayerCounters[client][PLAYER_KILL_SPITTERS],
-		g_iPlayerCounters[client][PLAYER_KILL_TANKS],
-		g_iPlayerCounters[client][PLAYER_KILL_TANKS_WITHOUT_DEATHS],
-		g_iPlayerCounters[client][PLAYER_KILL_WITCHES],
-		g_iPlayerCounters[client][PLAYER_KILL_ZOMBIES],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_BOOMER],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_CHARGER],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_HUNTER],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_JOCKEY],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_SMOOKER],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_SPITTER],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_TANK],
-		g_iPlayerCounters[client][PLAYER_KILLED_BY_WITCH],
-		g_iPlayerCounters[client][PLAYER_LEFT4DEAD],
-		g_iPlayerCounters[client][PLAYER_MELEE_KILLS],
-		iClientPlaytime, // tiempo nuevo del jugador
-		g_iPlayerCounters[client][PLAYER_NEW_POINTS], // puntos nuevos del jugador
-		g_iPlayerCounters[client][PLAYER_POINTS_GIFT], // puntos nuevos regalados para el jugador
-		g_iPlayerCounters[client][PLAYER_POINTS_LOST], // puntos nuevos perdidos del jugador
-		g_iPlayerCounters[client][PLAYER_POINTS_VIP], // puntos nuevos obtenidos por vip
-		g_iPlayerCounters[client][PLAYER_ROUNDS],
-		g_iPlayerCounters[client][PLAYER_ROUNDS_ALL_SURVIVE],
-		g_iPlayerCounters[client][PLAYER_ROUNDS_FAILED],
-		g_iPlayerCounters[client][PLAYER_ROUNDS_SUCCESSFUL],
-		g_iPlayerCounters[client][PLAYER_SELF_ADRENALINE],
-		g_iPlayerCounters[client][PLAYER_SELF_CURED],
-		g_iPlayerCounters[client][PLAYER_SELF_PILLS],
-		g_iPlayerCounters[client][PLAYER_SERVER_JOIN],
-		g_iPlayerCounters[client][PLAYER_SERVER_LEFT],
-		g_iPlayerCounters[client][PLAYER_SPOKENTIME]
-	);
-	return sqlcode;
 }
 
 public void OnUpdatePlayersStatsFailure(Database db, any data, int numQueries, const char[] error, int failIndex, any[] queryData) {
@@ -518,12 +407,12 @@ public void OnMapStart() {
 	// g_roundsMap = 1;
 	ADOnMapStart();
 	PrecacheSound(SOUND_JOIN, true);
-	// PrecacheSound(SOUND_MAPTIME_START, true);
+	PrecacheSound(SOUND_MAPTIME_START, true);
 	PrecacheSound(SOUND_MAPTIME_FINISH, true);
 	g_iFailedAttempts = 0;
 	char query[256];
 	Format(query, sizeof(query), "CALL PLAYER_COUNT();");
-	SQL_TQuery(g_dbConnection, GetRankTotal, query, _, DBPrio_High);
+	SQL_TQuery(g_database, GetRankTotal, query, _, DBPrio_High);
 }
 
 public Action eventTankSpawn(Event event, const char[] name, bool dontBroadcast) {
@@ -540,7 +429,7 @@ public Action eventTankKilled(Event event, const char[] name, bool dontBroadcast
 
 public Action eventMeleeKill(Event event, const char[] name, bool dontBroadcast) {
 	int client = GetClientOfUserId(event.GetInt("userid"));
-	g_iPlayerCounters[client][PLAYER_MELEE_KILLS]++; 
+	Players[client].melee_kills++; 
 }
 
 public Action eventMolotovThrown(Event event, const char[] name, bool dontBroadcast) {
@@ -557,7 +446,7 @@ public Action eventRoundStart(Event event, const char[] name, bool dontBroadcast
 	g_fMapTimingStartTime = 0.0;
 
 	for (int i = 1; i <= MaxClients; i++) {
-		g_iPlayerCounters[i][PLAYER_ROUNDS]++;
+		Players[i].rounds++;
 	}
 	return Plugin_Continue;
 }
@@ -567,7 +456,7 @@ public Action eventRoundEnd(Event event, const char[] name, bool dontBroadcast) 
 		return;
 	}
 	for (int i = 1; i <= MaxClients; i++) {
-		g_iPlayerCounters[i][PLAYER_ROUNDS]++;
+		Players[i].rounds++;
 	}
 	g_iFailedAttempts++;
 }
@@ -576,127 +465,15 @@ public Action eventRoundEnd(Event event, const char[] name, bool dontBroadcast) 
  * Al ingresar el cliente
  * @param client
  */
-public void OnClientPostAdminCheck(int client) {
+public void OnClientAuthorized(int client) {
 	// Verificando que sea una entidad valida
 	if (IsValidEntity(client)) {
 		// Verificando que el jugador sea real
 		if(!IsFakeClient(client)) {
 			// Definiendo contador a 0
-			resetVariables(client);
+			PlayerReset(client);
 			// Obteniendo informacion en la base de datos
-			getPlayer(client);
-		}
-	}
-}
-
-/**
- * Funcion para establecer los valores en 0 de un cliente
- * @param client
- */
-void resetVariables(int client) {
-	g_playerSteamId[client] = "";
-	g_playerAssistanceFactor[client] = 0.0;
-	for(int i = 0; i < MAX_LENGTH_SKILLS; i++) {
-		if(i == PLAYER_START_TIME) {
-			g_iPlayerCounters[client][i] = GetTime();
-		} else {
-			g_iPlayerCounters[client][i] = 0;
-		}
-	}
-}
-
-/**
- * Funcion for connect to Database
- */
-public void vConnectDatabase() {
-	// Verificando si existe la configuracion
-	if (SQL_CheckConfig(DB_CONF_NAME)) {
-		char Error[80];
-		// Instanciando conexion en g_dbConnection
-		g_dbConnection = SQL_Connect(DB_CONF_NAME, true, Error, sizeof(Error));
-		// Verificando si g_dbConnection fue exitosa
-		if(g_dbConnection == null) {
-			LogError("Failed to connect to database: %s", Error);
-			SetFailState("Failed to connect to database: %s", Error);
-		}
-		g_dbConnection.SetCharset("utf8");
-	} else {
-		LogError("database.cfg missing '%s' entry!", DB_CONF_NAME);
-		SetFailState("database.cfg missing '%s' entry!", DB_CONF_NAME);
-	}
-}
-
-// Funcion para cuando un jugador se conecta al servidor...
-public void getPlayer(int client) {
-	// Verificando si el cliente es valido
-	if (client) {
-		// Verificando si el jugador esta en linea
-		if (IsClientInGame(client)) {
-			// Verificando que el cliente no sea falso
-			if (!IsFakeClient(client)) {
-				// Creando variables necesarias
-				char clientName[MAX_NAME_LENGTH],
-					clientIp[16], 
-					sqlCommand[512]; // SteamID[MAX_LINE_WIDTH],
-				GetClientName(client, clientName, MAX_NAME_LENGTH);
-				// Obteniendo el steam id del jugador
-				GetClientAuthId(client, AuthId_Steam2, g_playerSteamId[client], MAX_LINE_WIDTH);
-				// Asignando valor a la ip
-				GetClientIP(client, clientIp, sizeof(clientIp));
-				// Formateando datos de actualizacion
-				Format(sqlCommand, sizeof(sqlCommand), "CALL PLAYER_JOINED('%s', '%s', '%s');", g_playerSteamId[client], clientIp, clientName);
-				// Verficando que se haya enviado correctamente
-				if((playerData = g_dbConnection.Query(g_dbConnection, sqlCommand)) != null) {
-					// Extrayendo datos
-					if(playerData.FetchRow()) {
-						// Asignando valores
-						g_iPlayerCounters[client][PLAYER_KILL_BOSSES] = playerData.FetchInt(0);
-						g_playerAssistanceFactor[client] = playerData.FetchFloat(1);
-						g_iPlayerCounters[client][PLAYER_POINTS] = playerData.FetchInt(2);
-						g_iPlayerCounters[client][PLAYER_PLAYTIME] = playerData.FetchInt(3);
-						g_iPlayerCounters[client][PLAYER_RANK] = playerData.FetchInt(4);
-						g_iPlayerCounters[client][PLAYER_POINTS_FOR_NEXT_RANK] = playerData.FetchInt(5);
-						int ban_expired = playerData.FetchInt(6);
-						if(ban_expired > GetTime()) {
-							KickClient(client, "You're banned.\nTry to contact with us via Discord [http://discord.l4d.io]");
-							return;
-						}
-						playerData.FetchMoreResults();
-						// Verificando si el jugador tiene puntos mayor igual a 10k
-						if (g_iPlayerCounters[client][PLAYER_POINTS] >= 10000) {
-							// Verificando que tenga al menos un dia de juego
-							if(g_iPlayerCounters[client][PLAYER_PLAYTIME] >= 86400) {
-								// Viendo si el factor es mayor a 0.5
-								if(g_playerAssistanceFactor[client] >= 1) {
-									int clientBonusPoints = RoundToFloor(g_playerAssistanceFactor[client]);
-									clientBonusPoints = (clientBonusPoints > 10) ? 10 : clientBonusPoints;
-									// Giving points
-									g_iPlayerCounters[client][PLAYER_BONUS_POINTS] = clientBonusPoints;
-								}
-							}
-						} else if(g_iPlayerCounters[client][PLAYER_POINTS] <= POINTS_NEGATIVE_FOR_KICK_PLAYERS) {
-							KickClient(client, "Sorry you have alot of negative points [%d].\nPlease contact to us via Discord [http://discord.l4d.io] for resolve your problem.", g_iPlayerCounters[client][PLAYER_POINTS]);
-							return;
-						}
-
-						if(CheckCommandAccess(client, "sm_fk", ADMFLAG_KICK, true)) {
-							CPrintToChatAll("\x05+\x04 Admin {blue}%N \x05has joined", client);
-						} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-							CPrintToChatAll("\x05+\x04 Moderator {blue}%N \x05has joined", client);
-						} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
-							CPrintToChatAll("\x05+\x04 VIP {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", client, g_iPlayerCounters[client][PLAYER_RANK],g_iPlayerCounters[client][PLAYER_POINTS]);
-						} else {
-							CPrintToChatAll("\x05+ Player {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", client, g_iPlayerCounters[client][PLAYER_RANK],g_iPlayerCounters[client][PLAYER_POINTS]);
-						}
-						EmitSoundToAll(SOUND_JOIN);
-					}
-				} else {
-					char error[255];
-					SQL_GetError(g_dbConnection, error, sizeof(error));
-					PrintToServer("Failed to query (error: %s)", error);
-					LogError("Failed to query (error: %s)", error);
-				}
-			}
+			PlayerFetch(client);
 		}
 	}
 }
@@ -706,7 +483,7 @@ public Action eventWitchDisturb(Event event, const char[] name, bool dontBroadca
 	if(client) {
 		if(IsValidEntity(client)) {
 			if(!IsFakeClient(client)) {
-				g_iPlayerCounters[client][PLAYER_COUNTER_WITCH_DISTURB] += 1;
+				Players[client].counter_witch_disturb += 1;
 			}
 		}
 	}
@@ -718,8 +495,8 @@ public Action eventWitchKilled(Event event, const char[] name, bool dontBroadcas
 	if(client) {
 		if(IsValidEntity(client)) {
 			if(!IsFakeClient(client)) {
-				int Score = cvar_Witch.IntValue + g_iStatsBalans + g_iPlayerCounters[client][PLAYER_BONUS_POINTS];
-				g_iPlayerCounters[client][PLAYER_KILL_WITCHES] += 1;
+				int Score = cvar_Witch.IntValue + g_iStatsBalans + Players[client].bonus_points;
+				Players[client].kill_witches += 1;
 				CPrintToChatAll("{blue}%N {green}killed {blue}Witch",client);
 				AddScore(client, Score);
 			}
@@ -758,55 +535,55 @@ public Action eventPlayerDeath(Event event, const char[] name, bool dontBroadcas
 								// Verificando que pertenezca al equipo de sobrevivientes
 								if(GetClientTeam(attacker) == TEAM_SURVIVORS) {
 									Score = -50;
-									g_iPlayerCounters[attacker][PLAYER_TK_BLOCK_DAMAGE] += 30;
+									Players[attacker].tk_block_damage += 30;
 									pusnishTeamKiller(attacker);
 									CPrintToChatAll("{blue}%N {default}killed {blue}%N", attacker, victim);
-									g_iPlayerCounters[attacker][PLAYER_FRIENDS_KILLED] += 1;
+									Players[attacker].friends_killed += 1;
 								}
 							}
 						} else if(victim_team == TEAM_INFECTED) {
 							int special_infected = GetEntProp(victim, Prop_Send, "m_zombieClass");
-							int bonus_points = g_iPlayerCounters[attacker][PLAYER_BONUS_POINTS] + g_iStatsBalans;
+							int bonus_points = Players[attacker].bonus_points + g_iStatsBalans;
 							if(special_infected == ZC_SMOKER) {
 								Score = cvar_Smoker.IntValue + bonus_points;
-								g_iPlayerCounters[attacker][PLAYER_KILL_SMOOKERS] += 1;
+								Players[attacker].kill_smookers += 1;
 							} else if(special_infected == ZC_BOOMER) {
 								Score = cvar_Boomer.IntValue + bonus_points;
-								g_iPlayerCounters[attacker][PLAYER_KILL_BOOMERS] += 1;
+								Players[attacker].kill_boomers += 1;
 							} else if(special_infected == ZC_HUNTER) {
 								Score = cvar_Hunter.IntValue + bonus_points;
-								g_iPlayerCounters[attacker][PLAYER_KILL_HUNTERS] += 1;
+								Players[attacker].kill_hunters += 1;
 							} else if(special_infected == ZC_SPITTER) {
 								Score = cvar_Spitter.IntValue + bonus_points;
-								g_iPlayerCounters[attacker][PLAYER_KILL_SPITTERS] += 1;
+								Players[attacker].kill_spitters += 1;
 							} else if(special_infected == ZC_JOCKEY) {
 								Score = cvar_Jockey.IntValue + bonus_points;
-								g_iPlayerCounters[attacker][PLAYER_KILL_JOCKEYS] += 1;
+								Players[attacker].kill_jockeys += 1;
 							} else if(special_infected == ZC_CHARGER) {
 								Score = cvar_Charger.IntValue + bonus_points;
-								g_iPlayerCounters[attacker][PLAYER_KILL_CHARGERS] += 1;
+								Players[attacker].kill_chargers += 1;
 							} else if(special_infected == ZC_WITCH) {
 								CPrintToChatAll("Si jala el evento que pedo :v");
 							} else if(special_infected == ZC_TANK) {
 								Score = cvar_Tank.IntValue + bonus_points;
-								g_iPlayerCounters[attacker][PLAYER_KILL_TANKS] += 1;
+								Players[attacker].kill_tanks += 1;
 							}
-							g_iPlayerCounters[attacker][PLAYER_FRAGS]++;
-							g_iPlayerCounters[attacker][PLAYER_KILL_BOSSES]++;
-							g_iPlayerCounters[attacker][PLAYER_HEADSHOTS] += headshot;
+							Players[attacker].frags++;
+							Players[attacker].kill_bosses++;
+							Players[attacker].headshots += headshot;
 							AddScore(attacker, Score);
 						}
 					} else {
 						char VictimName[MAX_LINE_WIDTH];
 						event.GetString("victimname", VictimName, sizeof(VictimName));
 						if (StrEqual(VictimName, "Infected", false)) {
-							g_iPlayerCounters[attacker][PLAYER_KILL_ZOMBIES]++;
-							g_iPlayerCounters[attacker][PLAYER_HEADSHOTS] += headshot;
-							if ((g_iPlayerCounters[attacker][PLAYER_KILL_ZOMBIES] % KILL_COUNT_INFECTED) == 0) {
+							Players[attacker].kill_zombies++;
+							Players[attacker].headshots += headshot;
+							if ((Players[attacker].kill_zombies % KILL_COUNT_INFECTED) == 0) {
 								AddScore(attacker, 5);
-								PrintCenterText(attacker, "Infected killed: %d", g_iPlayerCounters[attacker][PLAYER_KILL_ZOMBIES]);
+								PrintCenterText(attacker, "Infected killed: %d", Players[attacker].kill_zombies);
 							}
-						} else if(DEBUG) {
+						} else {
 							PrintToChatAll("[stats] Asesinato de %s", VictimName);
 						}
 					}
@@ -841,16 +618,16 @@ public Action eventPlayerIncap(Event event, const char[] name, bool dontBroadcas
 				if (attacker != victim) {
 					if (GetClientTeam(attacker) == TEAM_SURVIVORS) {
 						if (GetClientTeam(victim) == TEAM_SURVIVORS) {
-							g_iPlayerCounters[attacker][PLAYER_TK_BLOCK_DAMAGE] += 25;
+							Players[attacker].tk_block_damage += 25;
 							CPrintToChat(victim, "{blue}%N \x05incapacitated {blue}you", attacker);
-							CPrintToChat(attacker, "{blue}You \x05incapacitated {blue}%N \x04[\x05%i TK\x04]", victim, g_iPlayerCounters[attacker][PLAYER_TK_BLOCK_DAMAGE]);
+							CPrintToChat(attacker, "{blue}You \x05incapacitated {blue}%N \x04[\x05%i TK\x04]", victim, Players[attacker].tk_block_damage);
 							pusnishTeamKiller(attacker);
 							// if(DEBUG) {
 								// CPrintToChatAll("se suma aqui la variable de: PLAYER_FRIENDS_INCAPPED");
 							// }
-							g_iPlayerCounters[attacker][PLAYER_FRIENDS_INCAPPED] += 1;
-							if(g_iPlayerCounters[attacker][PLAYER_BONUS_POINTS] > 0) {
-								g_iPlayerCounters[attacker][PLAYER_BONUS_POINTS]--;
+							Players[attacker].friends_incapped += 1;
+							if(Players[attacker].bonus_points > 0) {
+								Players[attacker].bonus_points--;
 							}
 							AddScore(attacker, -10);
 						}
@@ -868,7 +645,7 @@ public Action eventPlayerIncap(Event event, const char[] name, bool dontBroadcas
 
 // if(StrEqual(weapon, "inferno", true))
 // {
-// 	if(g_iPlayerCounters[target][PLAYER_POINTS] < 0)
+// 	if(Players[target].points < 0)
 // 	{
 // 		CPrintToChat(target, "{blue}%N \x05get out of there...", Attacker);
 // 		return Plugin_Handled;
@@ -914,11 +691,11 @@ public Action eventPlayerHurt(Event event, const char[] name, bool dontBroadcast
 						// Verificando que el target sea real
 						if(!IsFakeClient(target)) {
 							int Score = 1;
-							Score = (g_iPlayerCounters[attacker][PLAYER_BONUS_POINTS] > 0) ? ((Score * -damage) / 2) : ((Score * -damage));
+							Score = (Players[attacker].bonus_points > 0) ? ((Score * -damage) / 2) : ((Score * -damage));
 							Score = (Score == 0) ? -1 : Score;
-							g_iPlayerCounters[attacker][PLAYER_TK_BLOCK_DAMAGE] += (-1*Score);
-							CPrintToChat(target, "{blue}%N \x05attacked {blue}you \x04[\x05%i TK\x04]", attacker, g_iPlayerCounters[attacker][PLAYER_TK_BLOCK_DAMAGE]);
-							CPrintToChat(attacker, "{blue}You \x05attacked {blue}%N \x04[\x05%d TK\x04]", target, g_iPlayerCounters[attacker][PLAYER_TK_BLOCK_DAMAGE]);
+							Players[attacker].tk_block_damage += (-1*Score);
+							CPrintToChat(target, "{blue}%N \x05attacked {blue}you \x04[\x05%i TK\x04]", attacker, Players[attacker].tk_block_damage);
+							CPrintToChat(attacker, "{blue}You \x05attacked {blue}%N \x04[\x05%d TK\x04]", target, Players[attacker].tk_block_damage);
 							AddScore(attacker, Score);
 							pusnishTeamKiller(attacker);
 						}
@@ -948,22 +725,22 @@ public Action eventHealPlayer(Event event, const char[] name, bool dontBroadcast
 	if(!IsFakeClient(target)) {
 		if(!IsFakeClient(client)) {
 			if (target != client) {
-				g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] = g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] - 16;
-				if (g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] <= 0) {
-					g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] = 0;
+				Players[client].tk_block_damage = Players[client].tk_block_damage - 16;
+				if (Players[client].tk_block_damage <= 0) {
+					Players[client].tk_block_damage = 0;
 				}
 				int Score = 0;
 				int restored = event.GetInt("health_restored");
-				g_iPlayerCounters[client][PLAYER_FRIENDS_CURED] += 1;
+				Players[client].friends_cured += 1;
 				if (restored > 49) {
 					Score = 4;
-					g_iPlayerCounters[client][PLAYER_BONUS_POINTS] += 1;
+					Players[client].bonus_points += 1;
 				} else {
 					Score = 1;
 				}
 				AddScore(client, Score);
 			} else {
-				g_iPlayerCounters[client][PLAYER_SELF_CURED] += 1;
+				Players[client].self_cured += 1;
 			}
 		}
 	}
@@ -976,8 +753,8 @@ public Action eventDefigPlayer(Event event, const char[] name, bool dontBroadcas
 	if (!IsFakeClient(Recipient)) {
 		if(!IsFakeClient(Giver)) {
 			if (Recipient != Giver) {
-				g_iPlayerCounters[Giver][PLAYER_BONUS_POINTS] += 1;
-				g_iPlayerCounters[Giver][PLAYER_FRIENDS_REVIVED] += 1;
+				Players[Giver].bonus_points += 1;
+				Players[Giver].friends_revived += 1;
 				AddScore(Giver, 3);
 			}
 		}
@@ -991,13 +768,13 @@ public Action eventReviveSuccess(Event event, const char[] name, bool dontBroadc
 	if (!IsFakeClient(target)) {
 		if(!IsFakeClient(client)) {
 			if (target != client) {
-				g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] = g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] - 8;
-				if (g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] <= 0) {
-					g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] = 0;
+				Players[client].tk_block_damage = Players[client].tk_block_damage - 8;
+				if (Players[client].tk_block_damage <= 0) {
+					Players[client].tk_block_damage = 0;
 				}
-				g_iPlayerCounters[client][PLAYER_FRIENDS_ABOVE] += 1;
+				Players[client].friends_above += 1;
 				if(!event.GetBool("ledge_hang")) {
-					g_iPlayerCounters[client][PLAYER_BONUS_POINTS] += 1;
+					Players[client].bonus_points += 1;
 				}
 				AddScore(client, 2);
 				GrantPlayerColor(target);
@@ -1059,11 +836,11 @@ public Action eventPlayerNowIt(Event event, const char[] name, bool dontBroadcas
 												Score *= 2;
 											}
 										}
-										g_iPlayerCounters[attacker][PLAYER_VOMIT_TK_BLOCK_DAMAGE] += Score;
+										Players[attacker].vomit_tk_block_damage += Score;
 										AddScore(attacker, (Score * -1));
 										punishTeamVomiter(attacker);
-										CPrintToChat(victim, "{blue}%N {default}vomited you! \x04[\x05%i vomitTK\x04]", attacker, g_iPlayerCounters[attacker][PLAYER_VOMIT_TK_BLOCK_DAMAGE]);
-										CPrintToChat(attacker, "{blue}You {default}vomited {blue}%N ! \x04[\x05%i vomitTK\x04]", victim, g_iPlayerCounters[attacker][PLAYER_VOMIT_TK_BLOCK_DAMAGE]);
+										CPrintToChat(victim, "{blue}%N {default}vomited you! \x04[\x05%i vomitTK\x04]", attacker, Players[attacker].vomit_tk_block_damage);
+										CPrintToChat(attacker, "{blue}You {default}vomited {blue}%N ! \x04[\x05%i vomitTK\x04]", victim, Players[attacker].vomit_tk_block_damage);
 										return Plugin_Continue;
 									}
 								}
@@ -1085,24 +862,24 @@ public Action eventPlayerNowIt(Event event, const char[] name, bool dontBroadcas
 void punishTeamVomiter(int client) { 
 
 	// Verificando si el cliente ya supero el vomito
-	if ( g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE] > VOMIT_TK_BLOCK_MIN ) {
+	if ( Players[client].vomit_tk_block_damage > VOMIT_TK_BLOCK_MIN ) {
 
-		if ( g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE] > VOMIT_TK_BLOCK_MAX ) {
+		if ( Players[client].vomit_tk_block_damage > VOMIT_TK_BLOCK_MAX ) {
 
-			if ( g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_PUNISHMENT] < VOMIT_TK_BLOCK_MAX ) {
+			if ( Players[client].vomit_tk_block_punishment < VOMIT_TK_BLOCK_MAX ) {
 				
 				if (IsValidEntity(client) && IsClientInGame(client) && IsClientConnected(client) && !IsFakeClient(client) && IsPlayerAlive(client)) {
-					CPrintToChatAll("{blue}%N {default}has been slayed \x04[\x05%i vomitTK\x05]", client, g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE]);
-					g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_PUNISHMENT] = g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE];
+					CPrintToChatAll("{blue}%N {default}has been slayed \x04[\x05%i vomitTK\x05]", client, Players[client].vomit_tk_block_damage);
+					Players[client].vomit_tk_block_punishment = Players[client].vomit_tk_block_damage;
 					ServerCommand("sm_cancelvote");
 					ServerCommand("sm_slay #%d", GetClientUserId(client));
-					g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE] = 0;
+					Players[client].vomit_tk_block_damage = 0;
 				}
 			}
-		} else if ((g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE] - g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_PUNISHMENT]) > VOMIT_TK_BLOCK_MIN) {
+		} else if ((Players[client].vomit_tk_block_damage - Players[client].vomit_tk_block_punishment) > VOMIT_TK_BLOCK_MIN) {
 			if (IsValidEntity(client) && IsClientInGame(client) && IsClientConnected(client) && !IsFakeClient(client) && IsPlayerAlive(client)) {
-				g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_PUNISHMENT] = g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE];
-				CPrintToChatAll("Auto {blue}voteslay against {blue}%N [%i vomitTK]", client, g_iPlayerCounters[client][PLAYER_VOMIT_TK_BLOCK_DAMAGE]);
+				Players[client].vomit_tk_block_punishment = Players[client].vomit_tk_block_damage;
+				CPrintToChatAll("Auto {blue}voteslay against {blue}%N [%i vomitTK]", client, Players[client].vomit_tk_block_damage);
 				ServerCommand("sm_voteslay #%d", GetClientUserId(client));
 			}
 		}
@@ -1116,7 +893,7 @@ public Action eventSurvivorRescued(Event event, const char[] name, bool dontBroa
 		if(!IsFakeClient(client)) {
 			if(IsValidClient(target)) {
 				if(!IsFakeClient(target)) {
-					g_iPlayerCounters[client][PLAYER_FRIENDS_RESCUED] += 1;
+					Players[client].friends_rescued += 1;
 					AddScore(client, 2);
 				}
 			}
@@ -1145,7 +922,7 @@ public Action eventAward(Event event, const char[] name, bool dontBroadcast) {
 			case 67: {
 				// Verificando que el objetivo sea valido
 				if(target) {
-					g_iPlayerCounters[client][PLAYER_FRIENDS_PROTECTED] += 1;
+					Players[client].friends_protected += 1;
 				}
 				return Plugin_Continue;
 			}
@@ -1170,7 +947,7 @@ public Action eventAward(Event event, const char[] name, bool dontBroadcast) {
 			// Kill Tank with no deaths
 			case 81: {
 				// Sumando al cliente un asesinato de tank sin morir
-				g_iPlayerCounters[client][PLAYER_KILL_TANKS_WITHOUT_DEATHS] += 1;
+				Players[client].kill_tanks_without_deaths += 1;
 				return Plugin_Continue;
 			}
 			// Incap friendly
@@ -1182,7 +959,7 @@ public Action eventAward(Event event, const char[] name, bool dontBroadcast) {
 					// Verificando que cliente y el objetivo sean del equipo de sobrevivientes
 					if ( GetClientTeam(client) == TEAM_SURVIVORS && GetClientTeam(target) == TEAM_SURVIVORS) {
 						// Sumando al cliente una incapacitacion
-						g_iPlayerCounters[client][PLAYER_FRIENDS_INCAPPED] += 1;
+						Players[client].friends_incapped += 1;
 						// if(DEBUG) {
 						// 	PrintToChatAll("se suma aqui la variable de: PLAYER_FRIENDS_INCAPPED");
 						// }
@@ -1193,7 +970,7 @@ public Action eventAward(Event event, const char[] name, bool dontBroadcast) {
 			// Left friendly for dead
 			case 86: {
 				// Sumando al jugador una muerte culposa
-				g_iPlayerCounters[client][PLAYER_LEFT4DEAD] += 1;
+				Players[client].left4dead += 1;
 				return Plugin_Continue;
 			}
 			// Let infected in safe room
@@ -1201,7 +978,7 @@ public Action eventAward(Event event, const char[] name, bool dontBroadcast) {
 				// if(DEBUG) {
 				// 	PrintToChatAll("Se dejo en el saferoom infectados especiales");
 				// }
-				g_iPlayerCounters[client][PLAYER_INFECTED_LET_IN_SAFEHOUSE] += 1;
+				Players[client].infected_let_in_safehouse += 1;
 				return Plugin_Continue;
 			}
 		}
@@ -1215,7 +992,7 @@ void givePills(int giver, int recipient){
 		if(g_iPillsGiven[pills_id] != 1) {
 			g_iPillsGiven[pills_id] = 1;
 			if (!IsFakeClient(giver)) {
-				g_iPlayerCounters[giver][PLAYER_FRIENDS_PILLS_GIVEN] += 1;
+				Players[giver].friends_pills_given += 1;
 			}
 		}
 	}
@@ -1227,7 +1004,7 @@ void giveAdrenaline(int giver, int recipient) {
 		if(g_iAdrenalineGiven[adrenalineId] != 1) {
 			g_iAdrenalineGiven[adrenalineId] = 1;
 			if (!IsFakeClient(giver)) {
-				g_iPlayerCounters[giver][PLAYER_FRIENDS_ADRENALINE_GIVEN] += 1;
+				Players[giver].friends_adrenaline_given += 1;
 			}
 		}
 	}
@@ -1247,49 +1024,49 @@ public void pusnishTeamKiller(int client) {
 				// Verificando que el cliente no sea falso
 				if(!IsFakeClient(client)) { 
 					// Verificando si el cliente tiene puntos a menos 500
-					if(g_iPlayerCounters[client][PLAYER_POINTS] >= -1000) {
+					if(Players[client].points >= -1000) {
 						// Verificando si el cliente ya supero el limite TK
-						if (g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] > g_iTkBlockMin) {
-							if (g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] > g_iTkBlockMax) {
-								if (g_iPlayerCounters[client][PLAYER_TK_BLOCK_PUNISHMENT] < g_iTkBlockMax) {
+						if (Players[client].tk_block_damage > g_iTkBlockMin) {
+							if (Players[client].tk_block_damage > g_iTkBlockMax) {
+								if (Players[client].tk_block_punishment < g_iTkBlockMax) {
 									// Cancenlando voto si existe alguno
 									CancelVote();
 									// Verificando si el cliente contiene flags
 									if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
 										// Verificando si el ultimo voto fue reciente
-										if (g_iPlayerCounters[client][PLAYER_LAST_VOTE_BANTIME] + 7 >= GetTime()) {
+										if (Players[client].last_vote_bantime + 7 >= GetTime()) {
 											// Creando switch para opcion random
 											switch(GetRandomInt(0, 2)) {
 												case 0: {
 													// Baneando al jugado
 													ServerCommand("sm_ban \"#%d\" \"%i\" \"%s\"", GetClientUserId(client), GetRandomInt(30, 60), "Team killer");
 													// Imprimiendo que el jugador se ha vuelto loco
-													CPrintToChatAll("{blue}%N {default}went crazy and {blue}banned{default} by the {blue}server! \x04[\x05{green}%i TK\x04]", client, g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE]);
+													CPrintToChatAll("{blue}%N {default}went crazy and {blue}banned{default} by the {blue}server! \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
 												}
 												default: {
 													// Expulsando al jugador
 													KickClient(client, "Don't abuse about your power !! ;)");
 													// Imprimiendo que el jugador se ha vuelto loco
-													CPrintToChatAll("{blue}%N {default}went crazy and {blue}kicked{default} by the {blue}server! \x04[\x05{green}%i TK\x04]", client, g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE]);
+													CPrintToChatAll("{blue}%N {default}went crazy and {blue}kicked{default} by the {blue}server! \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
 												}
 											}
 										} else {
 											// Asesinando al jugador
 											ServerCommand("sm_slay \"#%d\"", GetClientUserId(client));
 											// Imprimiendo mensaje
-											CPrintToChatAll("{blue}%N \x05went crazy \x04[\x05{green}%i TK\x04]", client, g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE]);
+											CPrintToChatAll("{blue}%N \x05went crazy \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
 										}
 									} else {
 										// Igualando el castigo con el block damage
-										g_iPlayerCounters[client][PLAYER_TK_BLOCK_PUNISHMENT] = g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE];
+										Players[client].tk_block_punishment = Players[client].tk_block_damage;
 										bool isBanned = false;
 										// Verificando si cliente tiene puntos menores a -300
-										if (g_iPlayerCounters[client][PLAYER_POINTS] < -300) {
+										if (Players[client].points < -300) {
 											// Verificando si el ultimo tiempo de voto fue reciente para banear dependiendo sus puntos * 2
-											if (g_iPlayerCounters[client][PLAYER_LAST_VOTE_BANTIME] + 7 >= GetTime()) {
-												// isBanned = BanClient(client, (-2 * g_iPlayerCounters[client][PLAYER_POINTS]), AuthId_Steam2, ON_BAN_REASON, ON_BAN_MESSAGE);
+											if (Players[client].last_vote_bantime + 7 >= GetTime()) {
+												// isBanned = BanClient(client, (-2 * Players[client].points), AuthId_Steam2, ON_BAN_REASON, ON_BAN_MESSAGE);
 											} else {
-												// isBanned = BanClient(client, (-1 * g_iPlayerCounters[client][PLAYER_POINTS]), AuthId_Steam2, ON_BAN_REASON, ON_BAN_MESSAGE);
+												// isBanned = BanClient(client, (-1 * Players[client].points), AuthId_Steam2, ON_BAN_REASON, ON_BAN_MESSAGE);
 											}
 										} else {
 											// En caso de que sus puntos sean mayores a -300 entonces se banea 5 horas
@@ -1297,7 +1074,7 @@ public void pusnishTeamKiller(int client) {
 										}
 										if(isBanned) {
 											// Imprimiendo que l jugado va hacer baneado
-											CPrintToChatAll("{blue}%N \x04(\x05%s\x4)\x05 has been banned \x04[\x05%i TK\x04]", client, g_playerSteamId[client], g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE]);				
+											CPrintToChatAll("{blue}%N \x04(\x05%s\x4)\x05 has been banned \x04[\x05%i TK\x04]", client, Players[client].authid, Players[client].tk_block_damage);				
 										}
 										#if DEBUG 
 										else {
@@ -1306,22 +1083,22 @@ public void pusnishTeamKiller(int client) {
 										#endif
 									}
 								
-								} else if ((g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE] - g_iPlayerCounters[client][PLAYER_TK_BLOCK_PUNISHMENT]) > g_iTkBlockMin) {			
+								} else if ((Players[client].tk_block_damage - Players[client].tk_block_punishment) > g_iTkBlockMin) {			
 									// Tk de castigo 
-									g_iPlayerCounters[client][PLAYER_TK_BLOCK_PUNISHMENT] = g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE];
+									Players[client].tk_block_punishment = Players[client].tk_block_damage;
 									// Obteniendo el tiempo
-									g_iPlayerCounters[client][PLAYER_LAST_VOTE_BANTIME] = GetTime();
+									Players[client].last_vote_bantime = GetTime();
 									// Verificando si tiene acceso de admin mod vip
 									if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
 										// Iniciando auto voteslay
 										ServerCommand("sm_voteslay \"#%d\"", GetClientUserId(client));
 										// Imprimiendo mensaje de autovote slay
-										CPrintToChatAll("{blue}Autovoteslay {default}against {blue}%N {default}because {green}team killing \x04[\x05{green}%i TK\x04]", client, g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE]);
+										CPrintToChatAll("{blue}Autovoteslay {default}against {blue}%N {default}because {green}team killing \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
 									} else {
 										// Iniciando voto de vote ban
 										ServerCommand("sm_voteban #%d \"Team killer\"", GetClientUserId(client));
 										// Imprimiendo mensaje 
-										CPrintToChatAll("{blue}Autovoteban {default}against {blue}%N \x04[\x05%iTK\x04] \x04({blue}Rank: \x05{green}%d {blue}Points: \x05%d\x04)", client, g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE], g_iPlayerCounters[client][PLAYER_RANK], g_iPlayerCounters[client][PLAYER_POINTS]);
+										CPrintToChatAll("{blue}Autovoteban {default}against {blue}%N \x04[\x05%iTK\x04] \x04({blue}Rank: \x05{green}%d {blue}Points: \x05%d\x04)", client, Players[client].tk_block_damage, Players[client].rank, Players[client].points);
 									}
 									return;
 								}
@@ -1347,7 +1124,7 @@ void ShowRank(int client)
 				Panel rank = new Panel();
 				char Value[128];
 
-				int theTime = g_iPlayerCounters[client][PLAYER_PLAYTIME];
+				int theTime = Players[client].playtime;
 				int days = theTime /60/60/24;
 				int hours = theTime/60/60%24;
 				int minutes = theTime/60%60;
@@ -1396,15 +1173,15 @@ void ShowRank(int client)
 
 				int BonusTK = 0;
 
-				if (g_iPlayerCounters[client][PLAYER_RANK] > 1000 || g_iPlayerCounters[client][PLAYER_RANK] == 0)
+				if (Players[client].rank > 1000 || Players[client].rank == 0)
 				{
 					BonusTK = -45;
 				}
-				else if (g_iPlayerCounters[client][PLAYER_RANK] > 100 && g_iPlayerCounters[client][PLAYER_RANK] < 1001)
+				else if (Players[client].rank > 100 && Players[client].rank < 1001)
 				{
 					BonusTK = 0;
 				}
-				else if (g_iPlayerCounters[client][PLAYER_RANK] > 0 && g_iPlayerCounters[client][PLAYER_RANK] < 101)
+				else if (Players[client].rank > 0 && Players[client].rank < 101)
 				{
 					BonusTK = 30;
 				}
@@ -1415,35 +1192,35 @@ void ShowRank(int client)
 				Format(Value, sizeof(Value), "Ranking of %N", client, client);
 				rank.DrawText(Value);
 
-				Format(Value, sizeof(Value), "Rank: %i of %i", g_iPlayerCounters[client][PLAYER_RANK], g_iRegisteredPlayers);
+				Format(Value, sizeof(Value), "Rank: %i of %i", Players[client].rank, g_iRegisteredPlayers);
 				rank.DrawText(Value);
 
-				if (g_iPlayerCounters[client][PLAYER_NEW_POINTS] != 0)
+				if (Players[client].new_points != 0)
 				{
-					if (g_iPlayerCounters[client][PLAYER_NEW_POINTS] > 0)
+					if (Players[client].new_points > 0)
 					{
 						if (hm_count_fails.IntValue > 0 && g_iFailedAttempts > 0)
 						{
-							Format(Value, sizeof(Value), "Points: %i + %i(%i)", client, g_iPlayerCounters[client][PLAYER_POINTS], g_iPlayerCounters[client][PLAYER_NEW_POINTS], calculatePoints(g_iPlayerCounters[client][PLAYER_NEW_POINTS]));
+							Format(Value, sizeof(Value), "Points: %i + %i(%i)", client, Players[client].points, Players[client].new_points, calculatePoints(Players[client].new_points));
 						}
 						else
 						{
-							Format(Value, sizeof(Value), "Points: %i + %i", client, g_iPlayerCounters[client][PLAYER_POINTS], g_iPlayerCounters[client][PLAYER_NEW_POINTS]);
+							Format(Value, sizeof(Value), "Points: %i + %i", client, Players[client].points, Players[client].new_points);
 						}
 					}
 					else
 					{
-						Format(Value, sizeof(Value), "Points: %i %i", client, g_iPlayerCounters[client][PLAYER_POINTS], g_iPlayerCounters[client][PLAYER_NEW_POINTS]);
+						Format(Value, sizeof(Value), "Points: %i %i", client, Players[client].points, Players[client].new_points);
 					}
 				}
 				else
 				{
-					Format(Value, sizeof(Value), "Points: %i", client, g_iPlayerCounters[client][PLAYER_POINTS]);
+					Format(Value, sizeof(Value), "Points: %i", client, Players[client].points);
 				}
 
 				rank.DrawText(Value);
 
-				Format(Value, sizeof(Value), "Killed Bosses: %i", client, g_iPlayerCounters[client][PLAYER_KILL_BOSSES]);
+				Format(Value, sizeof(Value), "Killed Bosses: %i", client, Players[client].kill_bosses);
 				rank.DrawText(Value);
 
 				Format(Value, sizeof(Value), "Connection Time: %s", client, contime);
@@ -1452,13 +1229,13 @@ void ShowRank(int client)
 				Format(Value, sizeof(Value), "Playtime: %s", client, playtime);
 				rank.DrawText(Value);
 				
-				Format(Value, sizeof(Value), "Assistance Factor: %.2f", client, g_playerAssistanceFactor[client]);
+				Format(Value, sizeof(Value), "Assistance Factor: %.2f", client, Players[client].factor);
 				rank.DrawText(Value);
 
-				Format(Value, sizeof(Value), "Bonus Points: %d", client, g_iPlayerCounters[client][PLAYER_BONUS_POINTS]);
+				Format(Value, sizeof(Value), "Bonus Points: %d", client, Players[client].bonus_points);
 				rank.DrawText(Value);
 
-				Format(Value, sizeof(Value), "TK: %i", client, g_iPlayerCounters[client][PLAYER_TK_BLOCK_DAMAGE]);
+				Format(Value, sizeof(Value), "TK: %i", client, Players[client].tk_block_damage);
 				rank.DrawText(Value);
 
 				Format(Value, sizeof(Value), "Voteban TK: %i", client, g_iTkBlockMinReal);
@@ -1536,7 +1313,7 @@ void DisplayRankTargetMenu(int client)
 			if(!IsFakeClient(i))
 			{
 				GetClientName(i, playername, sizeof(playername));
-				Format(DisplayName, sizeof(DisplayName), "%s (%i points)", playername, g_iPlayerCounters[i][PLAYER_POINTS]);
+				Format(DisplayName, sizeof(DisplayName), "%s (%i points)", playername, Players[i].points);
 				Format(identifier, sizeof(identifier), "%i", i);
 				hMenu.AddItem(identifier, DisplayName);
 			}
@@ -1577,7 +1354,7 @@ void DisplayRank(int target, int sender)
 	Panel rank = new Panel();
 	char Value[128];
 
-	int theTime = g_iPlayerCounters[target][PLAYER_PLAYTIME];
+	int theTime = Players[target].playtime;
 	int days = theTime /60/60/24;
 	int hours = theTime/60/60%24;
 	int minutes = theTime/60%60;
@@ -1623,15 +1400,15 @@ void DisplayRank(int target, int sender)
 
 	int BonusTK = 0;
 
-	if (g_iPlayerCounters[target][PLAYER_RANK] > 1000 || g_iPlayerCounters[target][PLAYER_RANK] == 0)
+	if (Players[target].rank > 1000 || Players[target].rank == 0)
 	{
 		BonusTK = -45;
 	}
-	else if (g_iPlayerCounters[target][PLAYER_RANK] > 100 && g_iPlayerCounters[target][PLAYER_RANK] < 1001)
+	else if (Players[target].rank > 100 && Players[target].rank < 1001)
 	{
 		BonusTK = 0;
 	}
-	else if (g_iPlayerCounters[target][PLAYER_RANK] > 0 && g_iPlayerCounters[target][PLAYER_RANK] < 101)
+	else if (Players[target].rank > 0 && Players[target].rank < 101)
 	{
 		BonusTK = 30;
 	}
@@ -1646,49 +1423,49 @@ void DisplayRank(int target, int sender)
 	Format(Value, sizeof(Value), "===========================");
 	rank.DrawText(Value);
 
-	Format(Value, sizeof(Value), "Rank: %i of %i", sender, g_iPlayerCounters[target][PLAYER_RANK], g_iRegisteredPlayers);
+	Format(Value, sizeof(Value), "Rank: %i of %i", sender, Players[target].rank, g_iRegisteredPlayers);
 	rank.DrawText(Value);
 
-	if (g_iPlayerCounters[target][PLAYER_NEW_POINTS] != 0)
+	if (Players[target].new_points != 0)
 	{
-		if (g_iPlayerCounters[target][PLAYER_NEW_POINTS] > 0)
+		if (Players[target].new_points > 0)
 		{
 			if (hm_count_fails.IntValue > 0)
 			{
-				Format(Value, sizeof(Value), "Points: %i + %i(%i)", sender, g_iPlayerCounters[target][PLAYER_POINTS], g_iPlayerCounters[target][PLAYER_NEW_POINTS], calculatePoints(g_iPlayerCounters[target][PLAYER_NEW_POINTS]));
+				Format(Value, sizeof(Value), "Points: %i + %i(%i)", sender, Players[target].points, Players[target].new_points, calculatePoints(Players[target].new_points));
 			}
 			else
 			{
-				Format(Value, sizeof(Value), "Points: %i + %i", sender, g_iPlayerCounters[target][PLAYER_POINTS], g_iPlayerCounters[target][PLAYER_NEW_POINTS]);
+				Format(Value, sizeof(Value), "Points: %i + %i", sender, Players[target].points, Players[target].new_points);
 			}
 		}
 		else
 		{
-			Format(Value, sizeof(Value), "Points: %i %i", sender, g_iPlayerCounters[target][PLAYER_POINTS], g_iPlayerCounters[target][PLAYER_NEW_POINTS]);
+			Format(Value, sizeof(Value), "Points: %i %i", sender, Players[target].points, Players[target].new_points);
 		}
 	}
 	else
 	{
-		Format(Value, sizeof(Value), "Points: %i", sender, g_iPlayerCounters[target][PLAYER_POINTS]);
+		Format(Value, sizeof(Value), "Points: %i", sender, Players[target].points);
 	}
 	rank.DrawText(Value);
 
 	Format(Value, sizeof(Value), "Connection Time: %s", sender, contime);
 	rank.DrawText(Value);
 
-	Format(Value, sizeof(Value), "Killed Bosses: %i", sender, g_iPlayerCounters[target][PLAYER_KILL_BOSSES]);
+	Format(Value, sizeof(Value), "Killed Bosses: %i", sender, Players[target].kill_bosses);
 	rank.DrawText(Value);
 
 	Format(Value, sizeof(Value), "Playtime: %s", sender, playtime);
 	rank.DrawText(Value);
 
-	Format(Value, sizeof(Value), "Assistance Factor: %.2f", sender, g_playerAssistanceFactor[target]);
+	Format(Value, sizeof(Value), "Assistance Factor: %.2f", sender, Players[target].factor);
 	rank.DrawText(Value);
 
-	Format(Value, sizeof(Value), "Bonus Points: %d", sender, g_iPlayerCounters[target][PLAYER_BONUS_POINTS]);
+	Format(Value, sizeof(Value), "Bonus Points: %d", sender, Players[target].bonus_points);
 	rank.DrawText(Value);
 
-	Format(Value, sizeof(Value), "TK: %i", sender, g_iPlayerCounters[target][PLAYER_TK_BLOCK_DAMAGE]);
+	Format(Value, sizeof(Value), "TK: %i", sender, Players[target].tk_block_damage);
 	rank.DrawText(Value);
 
 	Format(Value, sizeof(Value), "Voteban TK: %i", sender, g_iTkBlockMinReal);
@@ -1734,7 +1511,7 @@ public Action cmdFactorTop(int client, int args)
 			{
 				char query[128];
 				Format(query, sizeof(query), "CALL PLAYER_TOP(0,20);");
-				SQL_TQuery(g_dbConnection, DisplayAfTop, query, client, DBPrio_Low);
+				SQL_TQuery(g_database, DisplayAfTop, query, client, DBPrio_Low);
 			}
 		}
 	}
@@ -1794,7 +1571,7 @@ public Action cmdTop(int client, int args)
 			if (!IsFakeClient(client)) {
 				char query[256];
 				Format(query, sizeof(query), "CALL PLAYER_TOP(0, %d);", top);
-				SQL_TQuery(g_dbConnection, DisplayTop, query, client, DBPrio_Low);
+				SQL_TQuery(g_database, DisplayTop, query, client, DBPrio_Low);
 			}
 		}
 	}
@@ -1839,16 +1616,16 @@ public Action cmdNextRank(int client, int args) {
 	if (client) {
 		if (IsClientInGame(client)) {
 			if (!IsFakeClient(client)) {
-				if(g_iPlayerCounters[client][PLAYER_RANK] > 0) {
+				if(Players[client].rank > 0) {
 					Panel next = new Panel();
 					char buffer[128];
-					if (g_iPlayerCounters[client][PLAYER_RANK] == 1) {
+					if (Players[client].rank == 1) {
 						Format(buffer, sizeof(buffer), "You are 1st", client);
 						next.SetTitle(buffer);
 					} else {
-						Format(buffer, sizeof(buffer), "Next Rank: %d", client, (g_iPlayerCounters[client][PLAYER_RANK] - 1));
+						Format(buffer, sizeof(buffer), "Next Rank: %d", client, (Players[client].rank - 1));
 						next.SetTitle(buffer);
-						Format(buffer, sizeof(buffer), "Points required: %d", client, g_iPlayerCounters[client][PLAYER_POINTS_FOR_NEXT_RANK]);
+						Format(buffer, sizeof(buffer), "Points required: %d", client, Players[client].points_for_next_rank);
 						next.DrawText(buffer);
 					}
 					Format(buffer, sizeof(buffer), "More...", client);
@@ -1912,8 +1689,8 @@ public int NextRankPanelHandler(Menu panel, MenuAction action, int client, int o
 		if (option == 1)
 		{
 			char query[128];
-			Format(query, sizeof(query), "CALL PLAYER_NEXT_RANK('%s', %i);", g_playerSteamId[client], g_iPlayerCounters[client][PLAYER_POINTS]);
-			SQL_TQuery(g_dbConnection, DisplayFullNextRank, query, client, DBPrio_Low);
+			Format(query, sizeof(query), "CALL PLAYER_NEXT_RANK('%s', %i);", Players[client].authid, Players[client].points);
+			SQL_TQuery(g_database, DisplayFullNextRank, query, client, DBPrio_Low);
 		}
 	}
 	return 0;
@@ -1921,15 +1698,15 @@ public int NextRankPanelHandler(Menu panel, MenuAction action, int client, int o
 
 public void ShowRankTarget(int sender, int target) {
 	if(IsRealClient(target)) {
-		CPrintToChat(sender, "Player: {blue}%N\x01 | Rank: {blue}%d\x01 | Points: {blue}%d\x01 Map points: {blue}%d", target, g_iPlayerCounters[target][PLAYER_RANK], g_iPlayerCounters[target][PLAYER_POINTS], g_iPlayerCounters[target][PLAYER_NEW_POINTS]);
+		CPrintToChat(sender, "Player: {blue}%N\x01 | Rank: {blue}%d\x01 | Points: {blue}%d\x01 Map points: {blue}%d", target, Players[target].rank, Players[target].points, Players[target].new_points);
 	}
 }
 
 public Action cmdPoints(int client, int args) {
 	if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
-		PrintToChat(client, "Your points: %d , Your map points: %d, Your vip points: %d", g_iPlayerCounters[client][PLAYER_POINTS], g_iPlayerCounters[client][PLAYER_NEW_POINTS], calculatePointsForVip(client));
+		PrintToChat(client, "Your points: %d , Your map points: %d, Your vip points: %d", Players[client].points, Players[client].new_points, calculatePointsForVip(client));
 	} else {
-		PrintToChat(client, "Your points: %d , Your map points: %d", g_iPlayerCounters[client][PLAYER_POINTS], g_iPlayerCounters[client][PLAYER_NEW_POINTS]);
+		PrintToChat(client, "Your points: %d , Your map points: %d", Players[client].points, Players[client].new_points);
 	}
 	return Plugin_Handled;
 }
@@ -1949,15 +1726,15 @@ public Action cmdColors(int client, int args)
 
 public Action cmdPlaytime(int client, int args) {
 	if(client) {
-		PrintToChat(client, "Your playtime on this map: %d", (GetTime() - g_iPlayerCounters[client][PLAYER_START_TIME])/60%60);
+		PrintToChat(client, "Your playtime on this map: %d", (GetTime() - Players[client].start_time)/60%60);
 	}
 }
 
 public Action cmdVoteKick(int client, int args) {
 	if(	CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true) || 
 		CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true) ||
-		(g_iPlayerCounters[client][PLAYER_RANK] > 0 && g_iPlayerCounters[client][PLAYER_RANK] < 21)) {
-		if(g_iPlayerCounters[client][PLAYER_VOTE_KICK] < 3) {
+		(Players[client].rank > 0 && Players[client].rank < 21)) {
+		if(Players[client].vote_kick < 3) {
 			ShowVoteKickList(client);
 		} else {
 			PrintToChat(client, "\x04[\x05ASC\x04]{default} You has try to kick more that {blue}3 times{default}, wait for the next map.");
@@ -1979,7 +1756,7 @@ public int ShowVoteKickList(int client) {
 				if (!IsFakeClient(i)) {
 					if(!CheckCommandAccess(i, "sm_fk", ADMFLAG_GENERIC, true)) {
 						IntToString(i, str_userid, sizeof(str_userid));
-						Format(str_name, sizeof(str_name), "%N [RANK: %d]", i, g_iPlayerCounters[i][PLAYER_RANK]);
+						Format(str_name, sizeof(str_name), "%N [RANK: %d]", i, Players[i].rank);
 						hMenu.AddItem(str_userid, str_name);
 						players++;
 					}
@@ -2002,7 +1779,7 @@ public int MenuHandler_VoteKick(Menu menu, MenuAction action, int client, int it
 			menu.GetItem(item, char_user_id, sizeof(char_user_id));
 			int target_user_id = StringToInt(char_user_id);
 			if(target_user_id > 0) {
-				g_iPlayerCounters[client][PLAYER_VOTE_KICK] += 1;
+				Players[client].vote_kick += 1;
 				ServerCommand("sm_votekick \"#%d\" \"%s %N\"", GetClientUserId(target_user_id), "Vote kick, started by ", client);
 				CPrintToChatAll("\x04[\x05ASC\x04] %N\x01 start a vote kick for \x04%N", client, target_user_id);
 			}
@@ -2014,8 +1791,8 @@ public Action cmdFactor(int client, int args)
 {
 	if (client)
 	{
-		PrintToChat(client, "\x05Your assistance factor: \x04%.2f", g_playerAssistanceFactor[client]);
-		PrintToChat(client, "\x05Your bonus points: \x04%d", g_iPlayerCounters[client][PLAYER_BONUS_POINTS]);
+		PrintToChat(client, "\x05Your assistance factor: \x04%.2f", Players[client].factor);
+		PrintToChat(client, "\x05Your bonus points: \x04%d", Players[client].bonus_points);
 	}
 	return Plugin_Handled;
 }
@@ -2050,27 +1827,27 @@ void tplMapTop(int client) {
 			char clientName[MAX_NAME_LENGTH];
 			GetClientName(i, clientName, sizeof(clientName));
 			// Check if Points in map of player is > N>>J
-			if (g_iPlayerCounters[i][PLAYER_NEW_POINTS] > pointsLastPlayer) {
-				pointsCurrentBestPlayer = g_iPlayerCounters[i][PLAYER_NEW_POINTS];
+			if (Players[i].new_points > pointsLastPlayer) {
+				pointsCurrentBestPlayer = Players[i].new_points;
 				playerNameBestBuffer = clientName;
-				rankBestPlayer = g_iPlayerCounters[i][PLAYER_RANK];
+				rankBestPlayer = Players[i].rank;
 			// Check if Points in map of player is < N>>J
-			} else if (g_iPlayerCounters[i][PLAYER_NEW_POINTS] < pointsLastPlayer) {
-				pointsCurrentWorstPlayer = g_iPlayerCounters[i][PLAYER_NEW_POINTS];
+			} else if (Players[i].new_points < pointsLastPlayer) {
+				pointsCurrentWorstPlayer = Players[i].new_points;
 				playerNameWorstBuffer = clientName;
-				rankWorstPlayer = g_iPlayerCounters[i][PLAYER_RANK];
+				rankWorstPlayer = Players[i].rank;
 			}
 			// Best team helper on map
-			int myHelpAtMap = g_iPlayerCounters[i][PLAYER_FRIENDS_ABOVE] + g_iPlayerCounters[i][PLAYER_FRIENDS_CURED] + g_iPlayerCounters[i][PLAYER_FRIENDS_REVIVED] + g_iPlayerCounters[i][PLAYER_FRIENDS_RESCUED];
+			int myHelpAtMap = Players[i].friends_above + Players[i].friends_cured + Players[i].friends_revived + Players[i].friends_rescued;
 			// Check if is the best helper on map
 			if(myHelpAtMap > counterCurrentHelper) {
 				counterCurrentHelper = myHelpAtMap;
 				playerNameHelperBuffer = clientName;
-				rankHelper = g_iPlayerCounters[i][PLAYER_RANK];
-				pointsCurrentHelper = g_iPlayerCounters[i][PLAYER_POINTS];
+				rankHelper = Players[i].rank;
+				pointsCurrentHelper = Players[i].points;
 			}
-			totalPoints += g_iPlayerCounters[i][PLAYER_NEW_POINTS]; // sum of total points of all players in map
-			pointsLastPlayer = g_iPlayerCounters[i][PLAYER_NEW_POINTS];
+			totalPoints += Players[i].new_points; // sum of total points of all players in map
+			pointsLastPlayer = Players[i].new_points;
 		}
 	}
 	// Count tries of map
@@ -2126,12 +1903,12 @@ void tplMapTop(int client) {
 			}
 		}
 		// Print my map points in map with calculate according to tries
-		PrintToChat(client, "Your map points: %d (%d)", g_iPlayerCounters[client][PLAYER_NEW_POINTS], calculatePoints(g_iPlayerCounters[client][PLAYER_NEW_POINTS]));
+		PrintToChat(client, "Your map points: %d (%d)", Players[client].new_points, calculatePoints(Players[client].new_points));
 	}
 	else
 	{
 		// Print my map points in map
-		PrintToChat(client, "Your map points: %d", g_iPlayerCounters[client][PLAYER_NEW_POINTS]);
+		PrintToChat(client, "Your map points: %d", Players[client].new_points);
 	}
 }
 
@@ -2149,23 +1926,23 @@ void GrantPlayerColor(int client) {
 							SetEntityRenderColor(client, 0, 0, 0, 255); // Negro para administrador
 						} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
 							SetEntityRenderColor(client, 0, 176, 246, 255); // Cyan
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 1280000) {
+						} else if (Players[client].points > 1280000) {
 							SetEntityRenderColor(client, 102, 51, 0, 255); // Cafe
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 640000) {
+						} else if (Players[client].points > 640000) {
 							SetEntityRenderColor(client, 255, 97, 3, 255); // Orange color
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 320000) {
+						} else if (Players[client].points > 320000) {
 							SetEntityRenderColor(client, 255, 0, 0, 255); // Red color
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 160000) {
+						} else if (Players[client].points > 160000) {
 							SetEntityRenderColor(client, 255, 104, 240, 255); // pink color FF68F0
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 80000) {
+						} else if (Players[client].points > 80000) {
 							SetEntityRenderColor(client, 102, 25, 140, 255); // purple 66198C
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 40000) {
+						} else if (Players[client].points > 40000) {
 							SetEntityRenderColor(client, 0, 139, 0, 255); // green color
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 20000) {
+						} else if (Players[client].points > 20000) {
 							SetEntityRenderColor(client, 0, 0, 255, 255); // Blue colour
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 10000) {
+						} else if (Players[client].points > 10000) {
 							SetEntityRenderColor(client, 255, 255, 0, 255); // yellow
-						} else if (g_iPlayerCounters[client][PLAYER_POINTS] > 5000) {
+						} else if (Players[client].points > 5000) {
 							SetEntityRenderColor(client, 173, 255, 47, 255); // light green color
 						}
 						ServerCommand("sm_rcon setaura #%d", GetClientUserId(client));
@@ -2280,7 +2057,7 @@ float Calculate_Rank_Mod() {
 					if (!IsFakeClient(i)) {
 						if (GetClientTeam(i) == TEAM_SURVIVORS) {
 							current_players_count++;
-							current_player_rank = g_iPlayerCounters[i][PLAYER_RANK] * 1.0;
+							current_player_rank = Players[i].rank * 1.0;
 							if (current_player_rank < 1.0) {
 								// el jugador aún no está clasificado
 								current_player_rank = g_iRegisteredPlayers * 0.5;
@@ -2331,16 +2108,16 @@ float Calculate_Rank_Mod() {
 				if (IsClientInGame(i)) {
 					if (!IsFakeClient(i)) {
 						if (GetClientTeam(i) == TEAM_SURVIVORS) {
-							if (g_iPlayerCounters[i][PLAYER_RANK] == 0) g_fRankSum += 0.0;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 10) g_fRankSum += 5.0;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 25) g_fRankSum += 4.4;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 50) g_fRankSum += 3.8;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 100) g_fRankSum += 3.2;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 200) g_fRankSum += 2.6;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 400) g_fRankSum += 2.0;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 800) g_fRankSum += 1.4;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 1600) g_fRankSum += 0.8;
-							else if (g_iPlayerCounters[i][PLAYER_RANK] <= 3200) g_fRankSum += 0.2;
+							if (Players[i].rank == 0) g_fRankSum += 0.0;
+							else if (Players[i].rank <= 10) g_fRankSum += 5.0;
+							else if (Players[i].rank <= 25) g_fRankSum += 4.4;
+							else if (Players[i].rank <= 50) g_fRankSum += 3.8;
+							else if (Players[i].rank <= 100) g_fRankSum += 3.2;
+							else if (Players[i].rank <= 200) g_fRankSum += 2.6;
+							else if (Players[i].rank <= 400) g_fRankSum += 2.0;
+							else if (Players[i].rank <= 800) g_fRankSum += 1.4;
+							else if (Players[i].rank <= 1600) g_fRankSum += 0.8;
+							else if (Players[i].rank <= 3200) g_fRankSum += 0.2;
 							players_count++;
 						}
 					}
@@ -2449,7 +2226,7 @@ void PrintMapPoints() {
 	for (int i = 1; i <= MaxClients; i++) {
 		if (IsRealClient(i)) {
 			int bonus = calculatePointsForVip(i);
-			g_iPlayerCounters[i][PLAYER_NEW_POINTS] += bonus;
+			Players[i].new_points += bonus;
 			tplMapTop(i);
 		}
 	}
@@ -2458,10 +2235,10 @@ void PrintMapPoints() {
 int calculatePointsForVip(int client) {
 	int bonus = 0;
 	if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true) && !CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-		int points = g_iPlayerCounters[client][PLAYER_NEW_POINTS];
+		int points = Players[client].new_points;
 		if(points > 0) {
 			bonus = RoundToNearest(points * 0.2);
-			g_iPlayerCounters[client][PLAYER_POINTS_VIP] += bonus;
+			Players[client].points_vip += bonus;
 		}
 	}
 	return bonus;
@@ -2488,7 +2265,7 @@ public Action cmdGivePoints(int client, int args) {
 			ReplyToCommand(client, "Point for player: %s set to: %d", target_name, Score);
 			for (int i = 0; i < target_count; i++) {
 				int player = target_list[i];
-				g_iPlayerCounters[player][PLAYER_POINTS_GIFT] += Score;
+				Players[player].points_gift += Score;
 				AddScore(player, Score);
 			}
 			return Plugin_Handled;
@@ -2503,12 +2280,12 @@ public void AddScore(int client, int Score) {
 	if (Score > 0) {
 		if(g_pointsEnabled) {
 			PrintToChat(client, "\x05+%i", Score);
-			g_iPlayerCounters[client][PLAYER_NEW_POINTS] += Score;
+			Players[client].new_points += Score;
 		}
 	} else if (Score < 0) {
 		PrintToChat(client, "\x04%i", Score);
-		g_iPlayerCounters[client][PLAYER_NEW_POINTS] += Score;
-		g_iPlayerCounters[client][PLAYER_POINTS_LOST] += (-1 * Score);
+		Players[client].new_points += Score;
+		Players[client].points_lost += (-1 * Score);
 	}
 }
 
@@ -2519,9 +2296,9 @@ public Action cmdRank(int client, int args) {
 			ShowRankTarget(client, target);
 		}
 		else {
-			if(g_iPlayerCounters[client][PLAYER_RANK] == 0) {
+			if(Players[client].rank == 0) {
 				if(!CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-					getPlayer(client);
+					PlayerFetch(client);
 				}
 			}
 			ShowRank(client);
@@ -2600,7 +2377,7 @@ public int OnStartSFDoorFullyOpened(const char[] output, int caller, int activat
 public void StartMapTiming() {
 	if (g_fMapTimingStartTime == 0.0) {
 		g_fMapTimingStartTime = GetEngineTime();
-		// EmitSoundToAll(SOUND_MAPTIME_START);
+		EmitSoundToAll(SOUND_MAPTIME_START);
 	}
 }
 
@@ -2620,7 +2397,7 @@ public void StopMapTiming(){
 */
 public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon) {
 	if (!IsFakeClient(client)) {
-		if(g_iPlayerCounters[client][PLAYER_POINTS] < POINTS_TO_LAUNCH_GRENADE) {
+		if(Players[client].points < POINTS_TO_LAUNCH_GRENADE) {
 			int activeWeapon = GetEntPropEnt(client, Prop_Data, "m_hActiveWeapon");
 			if (activeWeapon > -1) {
 				char weponName[32];
@@ -2641,18 +2418,18 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 public Action onMessage(int client, int args) {
 	// Verificando si es un trigger ! o /
 	if(IsChatTrigger()) {
-		g_iPlayerCounters[client][PLAYER_COUNTER_COMMANDS]++;
+		Players[client].counter_commands++;
 		// Deteniendo el evento
 		return Plugin_Handled;
 	}
 	// Verificando que el jugador sea valido
 	if(IsValidClient(client)) {
 		if(client > 0) {
-			g_iPlayerCounters[client][PLAYER_COUNTER_MESSAGES]++;
+			Players[client].counter_messages++;
 			// Verificando si el jugador es un vip/mod/admin
 			if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true) ||
 				CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true) ||
-				g_iPlayerCounters[client][PLAYER_RANK] > 0 && g_iPlayerCounters[client][PLAYER_RANK] < 40) {
+				Players[client].rank > 0 && Players[client].rank < 40) {
 				// Inicializando variable
 				char message[256];
 				GetCmdArgString(message, sizeof(message));
@@ -2668,24 +2445,24 @@ public Action onMessage(int client, int args) {
 				// Verificando si tiene permisos como vip
 				} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
 					// Verificando si pertenece al top 40
-					if(g_iPlayerCounters[client][PLAYER_RANK] > 0 && g_iPlayerCounters[client][PLAYER_RANK] < 40) {
+					if(Players[client].rank > 0 && Players[client].rank < 40) {
 						// Imprimiendo mensaje
-						CPrintToChatAll("\x03[\x04V\x03]\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", g_iPlayerCounters[client][PLAYER_RANK], client, message[1]);
+						CPrintToChatAll("\x03[\x04V\x03]\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message[1]);
 					} else {
 						// Imprimiendo mensaje
 						CPrintToChatAll("\x03[\x04V\x03]\x05 {blue}%N: {default}%s", client, message[1]);
 					}
 				// Verificando si pertene al top 40
-				} else if(g_iPlayerCounters[client][PLAYER_RANK] > 0 && g_iPlayerCounters[client][PLAYER_RANK] < 25) {
+				} else if(Players[client].rank > 0 && Players[client].rank < 25) {
 					// Imprimiendo mensaje
-					CPrintToChatAll("\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", g_iPlayerCounters[client][PLAYER_RANK], client, message[1]);
+					CPrintToChatAll("\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message[1]);
 				}
 				return Plugin_Handled;
 			}
 		} else {
 			// char message[256];
 			// GetCmdArgString(message, sizeof(message));
-			// CPrintToChatAll("\x04[\x05CONSOLE\x04] {default}%s ----", g_iPlayerCounters[client][PLAYER_RANK], client, message);
+			// CPrintToChatAll("\x04[\x05CONSOLE\x04] {default}%s ----", Players[client].rank, client, message);
 		}
 		
 	} else {
@@ -2746,12 +2523,12 @@ void printTotalFrags(int client = 0) {
 	int fraggers[MAXPLAYERS+1][2];
 	int frag_counter = 0;
 	for(int i = 1; i < MaxClients; i++) {
-		if (g_iPlayerCounters[i][PLAYER_FRAGS] > 0) {
+		if (Players[i].frags > 0) {
 			if(IsClientInGame(i)) {
 				if(!IsFakeClient(i)) {
 					if(GetClientTeam(i) == TEAM_SURVIVORS) {
 						fraggers[frag_counter][0] = i;
-						fraggers[frag_counter][1] = g_iPlayerCounters[i][PLAYER_FRAGS];
+						fraggers[frag_counter][1] = Players[i].frags;
 						frag_counter++;
 					}
 				}

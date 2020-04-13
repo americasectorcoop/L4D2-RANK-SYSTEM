@@ -397,11 +397,10 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 	}
 	if (original_damage != damage) {
 		if (GetClientTeam(victim) == TEAM_SURVIVORS && GetClientTeam(attacker) == TEAM_SURVIVORS) {
-			if (g_iPlayerCounters[attacker][PLAYER_PLAYTIME] < 43200) {
+			if (Players[attacker].playtime < 43200) {
 				damage = 2.0;
 			} else {
 				if(!bIsPlayerIncapped(victim)) {
-				//if (!view_as<bool>(GetEntProp(victim, Prop_Send, "m_isIncapacitated", 1))) {
 					damage *= hm_damage_friendly.FloatValue;
 					int health = GetHealth(victim);
 					if (health > 1) {

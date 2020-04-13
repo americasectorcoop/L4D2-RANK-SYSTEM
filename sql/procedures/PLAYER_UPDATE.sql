@@ -1,6 +1,6 @@
 DROP PROCEDURE `PLAYER_UPDATE`;
 DELIMITER $$
-	CREATE DEFINER=`tokscsol`@`localhost` PROCEDURE
+	CREATE PROCEDURE
 		`PLAYER_UPDATE`
 		(IN `_steamid` VARCHAR(32), 
 			IN `_boxes_open` INT,
@@ -125,6 +125,6 @@ DELIMITER $$
 			server_join = server_join + _server_join,
 			server_left = server_left + _server_left,
 			spokentime = spokentime + _spokentime
-		WHERE steamid = _steamid;
+		WHERE steamid = SteamIdTo64(_steamid);
 	END$$
 DELIMITER ;
