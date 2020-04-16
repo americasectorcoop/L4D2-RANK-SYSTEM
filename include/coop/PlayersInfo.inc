@@ -76,19 +76,22 @@ enum struct PlayersInfo {
   int vomit_tk_block_punishment;
   int vote_kick;
 
-  void setAuthId(int client) {
+  void store(int client) {
+    this.id = client;
+    GetClientName(client, this.name, MAX_NAME_LENGTH);
     GetClientAuthId(client, AuthId_Steam2, this.authid, 32);
+    GetClientIP(client, this.ipv4, 16);
   }
 
   int getTimeInMatch() {
-    return GetTime() - this.start_time;
+    return GetTime() - RoundToCeil(GetClientTime(this.id));
   }
 
   char getQuery() {
     char sqlcode[2048];
     Format(sqlcode, 2048, "CALL PLAYER_UPDATE ('%s', %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d);",
       this.authid, // Steam id del jugador
-      this.boxes_open,
+      this.boxes_open, // *
       this.boxes_specials_open,
       this.counter_bh,
       this.counter_commands,
@@ -178,9 +181,7 @@ PlayersInfo Players[MAXPLAYERS + 1];
 
 stock void PlayerFetch(int client) {
   char query[256];
-  GetClientName(client, Players[client].name, MAX_NAME_LENGTH);
-  GetClientAuthId(client, AuthId_Steam2, Players[client].authid, 32);
-  GetClientIP(client, Players[client].ipv4, 16);
+  Players[client].store(client);
   Format(query, sizeof(query), "CALL PLAYER_JOINED('%s', '%s', '%s');", Players[client].authid, Players[client].ipv4, Players[client].name);
   g_database.Query(OnPlayerFetch, query, client, DBPrio_High);
 }
@@ -188,7 +189,6 @@ stock void PlayerFetch(int client) {
 public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, int client) {
   if (db == null || results == null) {
     LogError("Query failed! %s", error);
-    SetFailState("(OnPlayerFetch) Something is wrong: %s", error);
   } else if (results.RowCount == 0) {
     LogError("(OnPlayerFetch) Something is wrong: %s");
   } else {
@@ -272,79 +272,3 @@ public int Native_TYSTATS_GetRank(Handle plugin, int numParams) {
 public int Native_TYSTATS_GetPlayTime(Handle plugin, int numParams) {
   return Players[GetNativeCell(1)].playtime;
 }
-
-
-// // Funcion para cuando un jugador se conecta al servidor...
-// public void getPlayer(int client) {
-// 	// Verificando si el cliente es valido
-// 	if (client) {
-// 		// Verificando si el jugador esta en linea
-// 		if (IsClientInGame(client)) {
-// 			// Verificando que el cliente no sea falso
-// 			if (!IsFakeClient(client)) {
-// 				// Creando variables necesarias
-// 				char clientName[MAX_NAME_LENGTH],
-// 					clientIp[16], 
-// 					sqlCommand[512]; // SteamID[MAX_LINE_WIDTH],
-// 				GetClientName(client, clientName, MAX_NAME_LENGTH);
-// 				// Obteniendo el steam id del jugador
-// 				GetClientAuthId(client, AuthId_Steam2, Players[client].authid, MAX_LINE_WIDTH);
-// 				// Asignando valor a la ip
-// 				GetClientIP(client, clientIp, sizeof(clientIp));
-// 				// Formateando datos de actualizacion
-// 				Format(sqlCommand, sizeof(sqlCommand), "CALL PLAYER_JOINED('%s', '%s', '%s');", Players[client].authid, clientIp, clientName);
-// 				// Verficando que se haya enviado correctamente
-// 				if((playerData = g_database.Query(g_database, sqlCommand)) != null) {
-// 					// Extrayendo datos
-// 					if(playerData.FetchRow()) {
-// 						// Asignando valores
-// 						Players[client].kill_bosses = playerData.FetchInt(0);
-// 						Players[client].factor = playerData.FetchFloat(1);
-// 						Players[client].points = playerData.FetchInt(2);
-// 						Players[client].playtime = playerData.FetchInt(3);
-// 						Players[client].rank = playerData.FetchInt(4);
-// 						Players[client].points_for_next_rank = playerData.FetchInt(5);
-// 						int ban_expired = playerData.FetchInt(6);
-// 						if(ban_expired > GetTime()) {
-// 							KickClient(client, "You're banned.\nTry to contact with us via Discord [http://discord.l4d.io]");
-// 							return;
-// 						}
-// 						playerData.FetchMoreResults();
-// 						// Verificando si el jugador tiene puntos mayor igual a 10k
-// 						if (Players[client].points >= 10000) {
-// 							// Verificando que tenga al menos un dia de juego
-// 							if(Players[client].playtime >= 86400) {
-// 								// Viendo si el factor es mayor a 0.5
-// 								if(Players[client].factor >= 1) {
-// 									int clientBonusPoints = RoundToFloor(Players[client].factor);
-// 									clientBonusPoints = (clientBonusPoints > 10) ? 10 : clientBonusPoints;
-// 									// Giving points
-// 									Players[client].bonus_points = clientBonusPoints;
-// 								}
-// 							}
-// 						} else if(Players[client].points <= POINTS_NEGATIVE_FOR_KICK_PLAYERS) {
-// 							KickClient(client, "Sorry you have alot of negative points [%d].\nPlease contact to us via Discord [http://discord.l4d.io] for resolve your problem.", Players[client].points);
-// 							return;
-// 						}
-
-// 						if(CheckCommandAccess(client, "sm_fk", ADMFLAG_KICK, true)) {
-// 							CPrintToChatAll("\x05+\x04 Admin {blue}%N \x05has joined", client);
-// 						} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-// 							CPrintToChatAll("\x05+\x04 Moderator {blue}%N \x05has joined", client);
-// 						} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
-// 							CPrintToChatAll("\x05+\x04 VIP {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", client, Players[client].rank,Players[client].points);
-// 						} else {
-// 							CPrintToChatAll("\x05+ Player {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", client, Players[client].rank,Players[client].points);
-// 						}
-// 						EmitSoundToAll(SOUND_JOIN);
-// 					}
-// 				} else {
-// 					char error[255];
-// 					SQL_GetError(g_database, error, sizeof(error));
-// 					PrintToServer("Failed to query (error: %s)", error);
-// 					LogError("Failed to query (error: %s)", error);
-// 				}
-// 			}
-// 		}
-// 	}
-// }

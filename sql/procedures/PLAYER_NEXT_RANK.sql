@@ -6,9 +6,9 @@ CREATE PROCEDURE `PLAYER_NEXT_RANK`(IN `_steamid` VARCHAR(32), IN `_points` INT)
 BEGIN
 DECLARE _authid VARCHAR(64) DEFAULT SteamIdTo64(_steamid);
 
-(SELECT P.name, P.points
+(SELECT P.nickname, P.points
 FROM players AS P
-	LEFT JOIN permits AS A ON P.id = A.id
+	LEFT JOIN permits AS A ON A.id=P.permit_id
 WHERE
 	((A.flags NOT LIKE '%z%' AND A.flags NOT LIKE '%b%') OR A.flags IS NULL) AND
 	P.points > _points AND
@@ -16,11 +16,11 @@ WHERE
 ORDER BY points ASC
 LIMIT 3)
 UNION 
-	(SELECT name, points FROM players WHERE steamid = _authid)
+	(SELECT nickname, points FROM players WHERE steamid = _authid)
 UNION 
-	(SELECT P.name, P.points
+	(SELECT P.nickname, P.points
 	FROM players AS P
-		LEFT JOIN permits AS A ON P.id = A.id
+		LEFT JOIN permits AS A ON A.id=P.permit_id
 	WHERE
 		((A.flags NOT LIKE '%z%' AND A.flags NOT LIKE '%b%') OR A.flags IS NULL) AND
 		P.points < _points AND

@@ -85,10 +85,9 @@ float g_fRankSum = 0.0;
 float g_fMapTimingStartTime = -1.0;
 
 bool g_pointsEnabled = true;
-bool g_isPrint = false;
 bool g_isRoundStarted = false;
 
-ConVar hm_count_fails;
+// ConVar hm_count_fails;
 ConVar l4d2_rankmod_mode;
 ConVar l4d2_rankmod_min;
 ConVar l4d2_rankmod_max;
@@ -110,6 +109,7 @@ ConVar l4d2_difficulty_multiplier;
 #include <coop/PlayersInfo>
 #include <coop/autodifficulty>
 #include <coop/damage>
+#include <coop/MapPlayerTop>
 
 
 public Plugin myinfo = {
@@ -129,7 +129,7 @@ public void OnPluginStart() {
 	CoopAutoDiffOnPluginStart();
 	DamageOnPluginStart();
 
-	RegConsoleCmd("callvote", onVote);
+	RegConsoleCmd("callvote", OnAnyVote);
 
 	RegConsoleCmd("mut", cmdMute);
 	RegConsoleCmd("sm_ignore_voice", cmdMute);
@@ -148,10 +148,10 @@ public void OnPluginStart() {
 
 	// HookEvent("player_changename", EVENT_PLAYER_CHANGE_NAME);
 	HookEvent("player_spawn", eventPlayerSpawn);
-	HookEvent("witch_killed", eventWitchKilled);
+	HookEvent("witch_killed", OnEventWitchKilled);
 	HookEvent("witch_harasser_set", eventWitchDisturb);
 
-	HookEvent("player_death", eventPlayerDeath);
+	HookEvent("player_death", OnPlayerDeath);
 	HookEvent("player_incapacitated", eventPlayerIncap);
 	HookEvent("player_hurt", eventPlayerHurt);
 	HookEvent("round_start", eventRoundStart);
@@ -175,9 +175,10 @@ public void OnPluginStart() {
 
 	AddCommandListener(Command_Setinfo, "setinfo");
 
+	RegConsoleCmd("sm_chat_colors", cmdChatColors);
 	RegConsoleCmd("sm_rank", cmdRank, "sm_rank <target>");
-	RegConsoleCmd("sm_assist", cmdFactorTop, "sm_assist");
-	RegConsoleCmd("sm_factortop", cmdFactorTop, "sm_factortop");
+	// RegConsoleCmd("sm_assist", cmdFactorTop, "sm_assist");
+	// RegConsoleCmd("sm_factortop", cmdFactorTop, "sm_factortop");
 	RegConsoleCmd("sm_top", cmdTop);
 	RegConsoleCmd("sm_nextrank", cmdNextRank);
 	RegConsoleCmd("sm_points", cmdPoints);
@@ -193,13 +194,13 @@ public void OnPluginStart() {
 	RegConsoleCmd("say", onMessage);
 	RegConsoleCmd("say_team", onMessage);
 
-	RegAdminCmd("sm_updateplayers", cmdUpdatePlayers, ADMFLAG_ROOT, "Envia los puntos al servidor");
+	// RegAdminCmd("sm_updateplayers", cmdUpdatePlayers, ADMFLAG_ROOT, "Envia los puntos al servidor");
 	RegAdminCmd("sm_points_on", cmdPointsOn, ADMFLAG_GENERIC, "Activa los puntos de la partida");
 	RegAdminCmd("sm_points_off", cmdPointsOff, ADMFLAG_GENERIC, "Desactiva los puntos de la partida");
 
 	RegAdminCmd("sm_givepoints", cmdGivePoints, ADMFLAG_ROOT, "sm_givepoints <target> [Score]");
 
-	hm_count_fails = CreateConVar("hm_count_fails", "1", "");
+	// hm_count_fails = CreateConVar("hm_count_fails", "1", "");
 
 	l4d2_rankmod_mode = CreateConVar("l4d2_rankmod_mode", "0", "");
 	l4d2_rankmod_min = CreateConVar("l4d2_rankmod_min", "0.5", "");
@@ -210,11 +211,12 @@ public void OnPluginStart() {
 	l4d2_difficulty_multiplier = CreateConVar("l4d2_difficulty_multiplier", "1.2", "");
 
 	// WE FORCE TO RUNNING MAP START EVENT WHEN PLUGIN IS LOADED/RELOADED
-	// CreateTimer(1.0, MapStart);
+	CreateTimer(1.0, MapStart);
 }
 
 void OnDatabaseConnected() {
 	PrintToServer("Conexión a base de datos exitosa");
+	GetTotalPlayers();
 	// OnMapStart();
 }
 
@@ -259,7 +261,7 @@ public Action cmdMute(int client, int args) {
 	return Plugin_Handled;
 }
 
-public void GetRankTotal(Database db, DBResultSet results, const char[] error, any data) {
+public void OnFetchTotalPlayers(Database db, DBResultSet results, const char[] error, any data) {
 	if (db == null || results == null) {
 		LogError("Query failed! %s", error);
 		SetFailState("(OnPlayerFetch) Something is wrong: %s", error);
@@ -357,6 +359,7 @@ public int ToggleIgnoreStatus(int client, int target) {
 }
 
 public void UpdatePlayersStats() {
+	PrintToServer("ENVIANDO ESTADISTICAS AL SERVIDOR");
 	// Instanciando metodo de trasaction
 	Transaction transaction = new Transaction();
 	// Inicializando variables para guardar el query y el steam id
@@ -400,9 +403,9 @@ public void updateptystatslayers() {
 	}
 }
 
-// public Action MapStart(Handle timer) {
-	// OnMapStart();
-// }
+public Action MapStart(Handle timer) {
+	OnMapStart();
+}
 
 public void OnMapStart() {
 	// g_roundsMap = 1;
@@ -411,12 +414,16 @@ public void OnMapStart() {
 	PrecacheSound(SOUND_MAPTIME_START, true);
 	PrecacheSound(SOUND_MAPTIME_FINISH, true);
 	g_iFailedAttempts = 0;
+	if(g_database != null) {
+		GetTotalPlayers();
+	}
+}
+
+
+void GetTotalPlayers() {
 	char query[256];
 	Format(query, sizeof(query), "CALL PLAYER_COUNT();");
-	// SQL_TQuery(g_database, GetRankTotal, query, _, DBPrio_High);
-	if(g_database != null) {
-		g_database.Query(GetRankTotal, query, _, DBPrio_High);
-	}
+	g_database.Query(OnFetchTotalPlayers, query, _, DBPrio_High);
 }
 
 public Action eventTankSpawn(Event event, const char[] name, bool dontBroadcast) {
@@ -494,120 +501,125 @@ public Action eventWitchDisturb(Event event, const char[] name, bool dontBroadca
 	return Plugin_Continue;
 }
 
-public Action eventWitchKilled(Event event, const char[] name, bool dontBroadcast) {
+public Action OnEventWitchKilled(Event event, const char[] name, bool dontBroadcast) {
 	int client = GetClientOfUserId(event.GetInt("userid"));
-	if(client) {
-		if(IsValidEntity(client)) {
-			if(!IsFakeClient(client)) {
-				int Score = cvar_Witch.IntValue + g_iStatsBalans + Players[client].bonus_points;
-				Players[client].kill_witches += 1;
-				CPrintToChatAll("{blue}%N {green}killed {blue}Witch",client);
-				AddScore(client, Score);
-			}
-		}
-	}
+	if(!IsRealClient(client)) return Plugin_Continue;
+	int score = cvar_Witch.IntValue + g_iStatsBalans + Players[client].bonus_points;
+	Players[client].kill_witches += 1;
+	CPrintToChatAll("{blue}%N {green}killed {blue}Witch",client);
+	AddScore(client, score);
 	return Plugin_Continue;
 }
 
 /**
 *	Event when a player death
 */
-public Action eventPlayerDeath(Event event, const char[] name, bool dontBroadcast) {
+public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) {
 	// Obteniendo el id del jugador
 	int attacker = GetClientOfUserId(event.GetInt("attacker"));
 	// Verificando si fue un headshot
 	int headshot = event.GetBool("headshot") ? 1 : 0;
-	// Verificando si es una entidad valida
-	if (IsValidEntity(attacker)) {
-		// Verificando si es un atacante valid
-		if (attacker) { 
-			// Obteniendo el userid del jugador
-			int victim = GetClientOfUserId(event.GetInt("userid"));
-			// Verificando que el atacante no sea un bot
-			if (!IsFakeClient(attacker)) {
-				// Verificando que el atacante sea diferente de la victima
-				if (attacker != victim) {
-					int Score = 0;
-					// Verificando si el atacante es valido
-					if (victim > 0) {
-						// Guardando el grupo de la victima
-						int victim_team = GetClientTeam(victim);
-						// Verificando si la vctima es del grupo se los sobrevivintes
-						if(victim_team == TEAM_SURVIVORS) {
-							// verificando que no sea un jugador falso
-							if(!IsFakeClient(victim)) {
-								// Verificando que pertenezca al equipo de sobrevivientes
-								if(GetClientTeam(attacker) == TEAM_SURVIVORS) {
-									Score = -50;
-									Players[attacker].tk_block_damage += 30;
-									pusnishTeamKiller(attacker);
-									CPrintToChatAll("{blue}%N {default}killed {blue}%N", attacker, victim);
-									Players[attacker].friends_killed += 1;
-								}
-							}
-						} else if(victim_team == TEAM_INFECTED) {
-							int special_infected = GetEntProp(victim, Prop_Send, "m_zombieClass");
-							int bonus_points = Players[attacker].bonus_points + g_iStatsBalans;
-							if(special_infected == ZC_SMOKER) {
-								Score = cvar_Smoker.IntValue + bonus_points;
-								Players[attacker].kill_smookers += 1;
-							} else if(special_infected == ZC_BOOMER) {
-								Score = cvar_Boomer.IntValue + bonus_points;
-								Players[attacker].kill_boomers += 1;
-							} else if(special_infected == ZC_HUNTER) {
-								Score = cvar_Hunter.IntValue + bonus_points;
-								Players[attacker].kill_hunters += 1;
-							} else if(special_infected == ZC_SPITTER) {
-								Score = cvar_Spitter.IntValue + bonus_points;
-								Players[attacker].kill_spitters += 1;
-							} else if(special_infected == ZC_JOCKEY) {
-								Score = cvar_Jockey.IntValue + bonus_points;
-								Players[attacker].kill_jockeys += 1;
-							} else if(special_infected == ZC_CHARGER) {
-								Score = cvar_Charger.IntValue + bonus_points;
-								Players[attacker].kill_chargers += 1;
-							} else if(special_infected == ZC_WITCH) {
-								CPrintToChatAll("Si jala el evento que pedo :v");
-							} else if(special_infected == ZC_TANK) {
-								Score = cvar_Tank.IntValue + bonus_points;
-								Players[attacker].kill_tanks += 1;
-							}
-							Players[attacker].frags++;
-							Players[attacker].kill_bosses++;
-							Players[attacker].headshots += headshot;
-							AddScore(attacker, Score);
-						}
-					} else {
-						char VictimName[MAX_LINE_WIDTH];
-						event.GetString("victimname", VictimName, sizeof(VictimName));
-						if (StrEqual(VictimName, "Infected", false)) {
-							Players[attacker].kill_zombies++;
-							Players[attacker].headshots += headshot;
-							if ((Players[attacker].kill_zombies % KILL_COUNT_INFECTED) == 0) {
-								AddScore(attacker, 5);
-								PrintCenterText(attacker, "Infected killed: %d", Players[attacker].kill_zombies);
-							}
-						} else {
-							PrintToChatAll("[stats] Asesinato de %s", VictimName);
+	// Obteniendo el userid del jugador
+	int victim = GetClientOfUserId(event.GetInt("userid"));
+	// Verificando que el atacante no sea un bot
+	if (IsRealClient(attacker)) {
+		// Verificando que el atacante sea diferente de la victima
+		if (attacker != victim) {
+			int score = 0;
+			int bonus_points = Players[attacker].bonus_points + g_iStatsBalans;
+			// Verificando si el atacante es valido
+			if (victim > 0) {
+				// Guardando el grupo de la victima
+				int victim_team = GetClientTeam(victim);
+				// Verificando si la vctima es del grupo se los sobrevivintes
+				if(victim_team == TEAM_SURVIVORS) {
+					// verificando que no sea un jugador falso
+					if(!IsFakeClient(victim)) {
+						// Verificando que pertenezca al equipo de sobrevivientes
+						if(GetClientTeam(attacker) == TEAM_SURVIVORS) {
+							score = -50;
+							Players[attacker].tk_block_damage += 30;
+							pusnishTeamKiller(attacker);
+							CPrintToChatAll("{blue}%N {default}killed {blue}%N", attacker, victim);
+							Players[attacker].friends_killed += 1;
 						}
 					}
-				} else {
-					CPrintToChatAll("%N se ha suicidado :O", attacker);
+				} else if(victim_team == TEAM_INFECTED) {
+					int special_infected = GetEntProp(victim, Prop_Send, "m_zombieClass");
+					if(special_infected == ZC_SMOKER) {
+						score = cvar_Smoker.IntValue + bonus_points;
+						Players[attacker].kill_smookers += 1;
+					} else if(special_infected == ZC_BOOMER) {
+						score = cvar_Boomer.IntValue + bonus_points;
+						Players[attacker].kill_boomers += 1;
+					} else if(special_infected == ZC_HUNTER) {
+						score = cvar_Hunter.IntValue + bonus_points;
+						Players[attacker].kill_hunters += 1;
+					} else if(special_infected == ZC_SPITTER) {
+						score = cvar_Spitter.IntValue + bonus_points;
+						Players[attacker].kill_spitters += 1;
+					} else if(special_infected == ZC_JOCKEY) {
+						score = cvar_Jockey.IntValue + bonus_points;
+						Players[attacker].kill_jockeys += 1;
+					} else if(special_infected == ZC_CHARGER) {
+						score = cvar_Charger.IntValue + bonus_points;
+						Players[attacker].kill_chargers += 1;
+					} else if(special_infected == ZC_WITCH) {
+						CPrintToChatAll("Si jala el evento que pedo :v");
+					} else if(special_infected == ZC_TANK) {
+						score = cvar_Tank.IntValue + bonus_points;
+						Players[attacker].kill_tanks += 1;
+					}
+					Players[attacker].frags += 1;
+					Players[attacker].kill_bosses += 1;
+					Players[attacker].headshots += headshot;
 				}
 			} else {
-				// al ser asesinado un jugador por un enemigo xD
-				// if(victim > 0) {
-				// 	// Guardando el grupo de la victima
-				// 	if(GetClientTeam(attacker) == TEAM_INFECTED) {
-				// 		int special_infected = GetEntProp(attacker, Prop_Send, "m_zombieClass");
-				// 		CPrintToChatAll("Zombie Class: %d", special_infected);
-				// 	}
-				// } else {
-				// 	char VictimName[MAX_LINE_WIDTH];
-				// 	event.GetString("victimname", VictimName, sizeof(VictimName));
-				// 	PrintToChatAll("%s", VictimName);
-				// }
+				char victim_name[MAX_LINE_WIDTH];
+				event.GetString("victimname", victim_name, sizeof(victim_name));
+				if (StrEqual(victim_name, "Infected", false)) {
+					Players[attacker].kill_zombies++;
+					Players[attacker].headshots += headshot;
+					if ((Players[attacker].kill_zombies % KILL_COUNT_INFECTED) == 0) {
+						score = 5  + bonus_points;
+						PrintCenterText(attacker, "Infected killed: %d", Players[attacker].kill_zombies);
+					}
+				} else {
+					PrintToChatAll("[stats] Asesinato de %s", victim_name);
+				}
 			}
+			AddScore(attacker, score);
+		} else {
+			CPrintToChatAll("%N se ha suicidado :O", attacker);
+		}
+	// esto para saber quien es el principal nemesis de cada jugador
+	// al ser asesinado un jugador por un enemigo xD
+	} else if(IsRealClient(victim)) {
+		// Guardando el grupo de la victima
+		if(GetClientTeam(attacker) == TEAM_INFECTED) {
+			int special_infected = GetEntProp(attacker, Prop_Send, "m_zombieClass");
+			if(special_infected == ZC_SMOKER) {
+				Players[victim].killed_by_smooker += 1;
+			} else if(special_infected == ZC_BOOMER) {
+				Players[victim].killed_by_boomer += 1;
+			} else if(special_infected == ZC_HUNTER) {
+				Players[victim].killed_by_hunter += 1;
+			} else if(special_infected == ZC_SPITTER) {
+				Players[victim].killed_by_spitter += 1;
+			} else if(special_infected == ZC_JOCKEY) {
+				Players[victim].killed_by_jockey += 1;
+			} else if(special_infected == ZC_CHARGER) {
+				Players[victim].killed_by_charger += 1;
+			} else if(special_infected == ZC_WITCH) {
+				CPrintToChatAll("Si jala el evento que pedo :v");
+			} else if(special_infected == ZC_TANK) {
+				Players[victim].killed_by_tank += 1;
+			}
+		} else {
+			// char VictimName[MAX_LINE_WIDTH];
+			// event.GetString("victimname", VictimName, sizeof(VictimName));
+			// TODO: FALTA AÑADIR CUANDO SE ASESINA POR UN MOB
+			// PrintToChatAll("%s", VictimName);
 		}
 	}
 	return Plugin_Continue;
@@ -1117,168 +1129,134 @@ public void pusnishTeamKiller(int client) {
 	}
 }
 
-void ShowRank(int client)
+void ShowRank(int client, int target)
 {
-	if(client)
-	{
-		if(IsClientInGame(client))
-		{
-			if(!IsFakeClient(client))
-			{
-				Panel rank = new Panel();
-				char Value[128];
-
-				int theTime = Players[client].playtime;
-				int days = theTime /60/60/24;
-				int hours = theTime/60/60%24;
-				int minutes = theTime/60%60;
-
-				char playtime[128];
-
-				if (hours == 0 && days == 0)
-				{
-					Format(playtime, sizeof(playtime), "%d min", client, minutes);
-				}
-				else if (days == 0)
-				{
-					Format(playtime, sizeof(playtime), "%d hour %d min", client, hours, minutes);
-				}
-				else
-				{
-					Format(playtime, sizeof(playtime), "%d day %d hour %d min", client, days, hours, minutes);
-				}
-
-				int cTime = RoundToCeil(GetClientTime(client));
-				int cDays = cTime / 86400;
-				cTime %= 86400;
-				int cHours = cTime / 3600;
-				cTime %= 3600;
-				int cMinutes = cTime / 60;
-				cTime %= 60;
-				int seconds = cTime;
-
-				char contime[128];
-				if (cMinutes < 1 && cHours < 1 && cDays < 1)
-				{
-					Format(contime, sizeof(contime), "%d sec", client, seconds);
-				}
-				else if (cHours < 1 && cDays < 1)
-				{
-					Format(contime, sizeof(contime), "%d min %d sec", client, cMinutes, seconds);
-				}
-				else if (cDays < 1)
-				{
-					Format(contime, sizeof(contime), "%d h %d min %d sec", client, cHours, cMinutes, seconds);
-				}
-				else
-				{
-					Format(contime, sizeof(contime), "%d d %d h %d min %d sec", client, cDays, cHours, cMinutes, seconds);
-				}
-
-				int BonusTK = 0;
-
-				if (Players[client].rank > 1000 || Players[client].rank == 0)
-				{
-					BonusTK = -45;
-				}
-				else if (Players[client].rank > 100 && Players[client].rank < 1001)
-				{
-					BonusTK = 0;
-				}
-				else if (Players[client].rank > 0 && Players[client].rank < 101)
-				{
-					BonusTK = 30;
-				}
-
-				int g_iTkBlockMinReal = g_iTkBlockMin + BonusTK;
-				int g_iTkBlockMaxReal = g_iTkBlockMax + BonusTK;
-
-				Format(Value, sizeof(Value), "Ranking of %N", client, client);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "===========================");
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Rank: %i of %i", Players[client].rank, g_iRegisteredPlayers);
-				rank.DrawText(Value);
-
-				if (Players[client].new_points != 0)
-				{
-					if (Players[client].new_points > 0)
-					{
-						if (hm_count_fails.IntValue > 0 && g_iFailedAttempts > 0)
-						{
-							Format(Value, sizeof(Value), "Points: %i + %i(%i)", client, Players[client].points, Players[client].new_points, calculatePoints(Players[client].new_points));
-						}
-						else
-						{
-							Format(Value, sizeof(Value), "Points: %i + %i", client, Players[client].points, Players[client].new_points);
-						}
-					}
-					else
-					{
-						Format(Value, sizeof(Value), "Points: %i %i", client, Players[client].points, Players[client].new_points);
-					}
-				}
-				else
-				{
-					Format(Value, sizeof(Value), "Points: %i", client, Players[client].points);
-				}
-
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Killed Bosses: %i", client, Players[client].kill_bosses);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Connection Time: %s", client, contime);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Playtime: %s", client, playtime);
-				rank.DrawText(Value);
-				
-				Format(Value, sizeof(Value), "Assistance Factor: %.2f", client, Players[client].factor);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Bonus Points: %d", client, Players[client].bonus_points);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "TK: %i", client, Players[client].tk_block_damage);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Voteban TK: %i", client, g_iTkBlockMinReal);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Ban TK: %i", client, g_iTkBlockMaxReal);
-				rank.DrawText(Value);
-
-
-				Format(Value, sizeof(Value), "For full stats visit:\n%s", WEBSITE_STATS);
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "===========================");
-				rank.DrawText(Value);
-
-				Format(Value, sizeof(Value), "Show full stats", client);
-				rank.DrawItem(Value);
-
-				Format(Value, sizeof(Value), "Next rank", client);
-				rank.DrawItem(Value);
-
-				Format(Value, sizeof(Value), "Top players", client);
-				rank.DrawItem(Value);
-
-				Format(Value, sizeof(Value), "Show players", client);
-				rank.DrawItem(Value);
-
-				Format(Value, sizeof(Value), "Close", client);
-				rank.DrawItem(Value);
-
-				rank.Send(client, RankPanelHandlerOption, 20);
-				delete rank;
-			}
-		}
+	if(client == 0 || !IsClientInGame(client) || IsFakeClient(client) || target == 0 || !IsClientInGame(target) || IsFakeClient(target)) {
+		return;
 	}
-	return;
+	Panel rank = new Panel();
+	char Value[128];
+
+	int theTime = Players[target].playtime;
+	int days = theTime /60/60/24;
+	int hours = theTime/60/60%24;
+	int minutes = theTime/60%60;
+
+	char playtime[128];
+
+	if (hours == 0 && days == 0) {
+		Format(playtime, sizeof(playtime), "%d min", minutes);
+	} else if (days == 0) {
+		Format(playtime, sizeof(playtime), "%d hour %d min", hours, minutes);
+	} else {
+		Format(playtime, sizeof(playtime), "%d day %d hour %d min", days, hours, minutes);
+	}
+
+	int cTime = RoundToCeil(GetClientTime(target));
+	int cDays = cTime / 86400;
+	cTime %= 86400;
+	int cHours = cTime / 3600;
+	cTime %= 3600;
+	int cMinutes = cTime / 60;
+	cTime %= 60;
+	int seconds = cTime;
+
+	char contime[128];
+	if (cMinutes < 1 && cHours < 1 && cDays < 1)
+	{
+		Format(contime, sizeof(contime), "%d sec", client, seconds);
+	}
+	else if (cHours < 1 && cDays < 1)
+	{
+		Format(contime, sizeof(contime), "%d min %d sec", client, cMinutes, seconds);
+	}
+	else if (cDays < 1)
+	{
+		Format(contime, sizeof(contime), "%d h %d min %d sec", client, cHours, cMinutes, seconds);
+	}
+	else
+	{
+		Format(contime, sizeof(contime), "%d d %d h %d min %d sec", client, cDays, cHours, cMinutes, seconds);
+	}
+
+	int BonusTK = 0;
+
+	if (Players[target].rank > 1000 || Players[target].rank == 0)
+	{
+		BonusTK = -45;
+	}
+	else if (Players[target].rank > 100 && Players[target].rank < 1001)
+	{
+		BonusTK = 0;
+	}
+	else if (Players[target].rank > 0 && Players[target].rank < 101)
+	{
+		BonusTK = 30;
+	}
+
+	int g_iTkBlockMinReal = g_iTkBlockMin + BonusTK;
+	int g_iTkBlockMaxReal = g_iTkBlockMax + BonusTK;
+
+	Format(Value, sizeof(Value), "Ranking of %N", client, client);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "===========================");
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Rank: %d of %d", Players[target].rank, g_iRegisteredPlayers);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Points: %d +%d", Players[target].points, calculatePoints(Players[target].new_points));
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Killed Bosses: %d", Players[target].kill_bosses);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Connection Time: %s", contime);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Playtime: %s", playtime);
+	rank.DrawText(Value);
+	
+	Format(Value, sizeof(Value), "Assistance Factor: %.2f", Players[target].factor);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Bonus Points: %d", Players[target].bonus_points);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "TK: %d", Players[target].tk_block_damage);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Voteban TK: %i", g_iTkBlockMinReal);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Ban TK: %i", g_iTkBlockMaxReal);
+	rank.DrawText(Value);
+
+
+	Format(Value, sizeof(Value), "For full stats visit:\n%s", WEBSITE_STATS);
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "===========================");
+	rank.DrawText(Value);
+
+	Format(Value, sizeof(Value), "Show full stats");
+	rank.DrawItem(Value);
+
+	Format(Value, sizeof(Value), "Next rank");
+	rank.DrawItem(Value);
+
+	Format(Value, sizeof(Value), "Top players");
+	rank.DrawItem(Value);
+
+	Format(Value, sizeof(Value), "Show players");
+	rank.DrawItem(Value);
+
+	Format(Value, sizeof(Value), "Close");
+	rank.DrawItem(Value);
+
+	rank.Send(client, RankPanelHandlerOption, 20);
+	delete rank;
 }
 
 public int RankPanelHandlerOption(Menu menu, MenuAction action, int client, int index)
@@ -1287,7 +1265,7 @@ public int RankPanelHandlerOption(Menu menu, MenuAction action, int client, int 
 	{
 		if (index == 1)
 		{
-			FakeClientCommand(client, "sm_browse www.americasectorcoop.org/stats");
+			FakeClientCommand(client, "sm_browse l4d.dev/stats");
 		}
 		else if (index == 2)
 		{
@@ -1354,209 +1332,7 @@ public int MenuHandler_Rank(Menu menu, MenuAction action, int client, int index)
 		}
 		else
 		{
-			DisplayRank(target, client);
-		}
-	}
-}
-
-void DisplayRank(int target, int sender)
-{
-	Panel rank = new Panel();
-	char Value[128];
-
-	int theTime = Players[target].playtime;
-	int days = theTime /60/60/24;
-	int hours = theTime/60/60%24;
-	int minutes = theTime/60%60;
-
-	char playtime[128];
-	if (hours == 0 && days == 0)
-	{
-		Format(playtime, sizeof(playtime), "%d min", sender, minutes);
-	}
-	else if (days == 0)
-	{
-		Format(playtime, sizeof(playtime), "%d hour %d min", sender, hours, minutes);
-	}
-	else
-	{
-		Format(playtime, sizeof(playtime), "%d day %d hour %d min", sender, days, hours, minutes);
-	}
-
-	int cTime = RoundToCeil(GetClientTime(target));
-
-	int cDays = cTime / 86400;
-	cTime %= 86400;
-	int cHours = cTime / 3600;
-	cTime %= 3600;
-	int cMinutes = cTime / 60;
-	cTime %= 60;
-	int seconds = cTime;
-
-	char contime[128];
-	if (cMinutes < 1 && cHours < 1 && cDays < 1)
-	{
-		Format(contime, sizeof(contime), "%d sec", sender, seconds);
-	}
-	else if (cHours < 1 && cDays < 1)
-	{
-		Format(contime, sizeof(contime), "%d min %d sec", sender, cMinutes, seconds);
-	}
-	else if (cDays < 1)
-	{
-		Format(contime, sizeof(contime), "%d h %d min %d sec", sender, cHours, cMinutes, seconds);
-	}
-	else Format(contime, sizeof(contime), "%d d %d h %d min %d sec", sender, cDays, cHours, cMinutes, seconds);
-
-	int BonusTK = 0;
-
-	if (Players[target].rank > 1000 || Players[target].rank == 0)
-	{
-		BonusTK = -45;
-	}
-	else if (Players[target].rank > 100 && Players[target].rank < 1001)
-	{
-		BonusTK = 0;
-	}
-	else if (Players[target].rank > 0 && Players[target].rank < 101)
-	{
-		BonusTK = 30;
-	}
-
-	int g_iTkBlockMinReal = g_iTkBlockMin + BonusTK;
-	int g_iTkBlockMaxReal = g_iTkBlockMax + BonusTK;
-
-	Format(Value, sizeof(Value), "Ranking of %N", sender, target);
-
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "===========================");
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Rank: %i of %i", sender, Players[target].rank, g_iRegisteredPlayers);
-	rank.DrawText(Value);
-
-	if (Players[target].new_points != 0)
-	{
-		if (Players[target].new_points > 0)
-		{
-			if (hm_count_fails.IntValue > 0)
-			{
-				Format(Value, sizeof(Value), "Points: %i + %i(%i)", sender, Players[target].points, Players[target].new_points, calculatePoints(Players[target].new_points));
-			}
-			else
-			{
-				Format(Value, sizeof(Value), "Points: %i + %i", sender, Players[target].points, Players[target].new_points);
-			}
-		}
-		else
-		{
-			Format(Value, sizeof(Value), "Points: %i %i", sender, Players[target].points, Players[target].new_points);
-		}
-	}
-	else
-	{
-		Format(Value, sizeof(Value), "Points: %i", sender, Players[target].points);
-	}
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Connection Time: %s", sender, contime);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Killed Bosses: %i", sender, Players[target].kill_bosses);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Playtime: %s", sender, playtime);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Assistance Factor: %.2f", sender, Players[target].factor);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Bonus Points: %d", sender, Players[target].bonus_points);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "TK: %i", sender, Players[target].tk_block_damage);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Voteban TK: %i", sender, g_iTkBlockMinReal);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Ban TK: %i", sender, g_iTkBlockMaxReal);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "For full stats visit:\n%s", WEBSITE_STATS);
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "===========================");
-	rank.DrawText(Value);
-
-	Format(Value, sizeof(Value), "Show full stats", sender);
-	rank.DrawItem(Value);
-
-
-	Format(Value, sizeof(Value), "Next rank", sender);
-	rank.DrawItem(Value);
-
-	Format(Value, sizeof(Value), "Top players", sender);
-	rank.DrawItem(Value);
-
-	Format(Value, sizeof(Value), "Show players", sender);
-	rank.DrawItem(Value);
-
-	Format(Value, sizeof(Value), "Close", sender);
-	rank.DrawItem(Value);
-
-	rank.Send(sender, RankPanelHandlerOption, 20);
-	delete rank;
-}
-
-
-public Action cmdFactorTop(int client, int args)
-{
-	if (client)
-	{
-		if(IsClientInGame(client))
-		{
-			if(!IsFakeClient(client))
-			{
-				char query[128];
-				Format(query, sizeof(query), "CALL PLAYER_TOP(0,20);");
-				SQL_TQuery(g_database, DisplayAfTop, query, client, DBPrio_Low);
-			}
-		}
-	}
-}
-
-public void DisplayAfTop(Handle owner, Handle hndl, const char[] error, any client) {
-	if (client) {
-		if(hndl != null) {
-			if(StrEqual("", error)) {
-				char Name[32];
-				Panel top = new Panel();
-				char Value[64];
-				float points = 0.0;
-				int number = 0;
-				Format(Value, sizeof(Value), "Top assistance factor", client);
-				top.SetTitle(Value);
-				while (SQL_FetchRow(hndl)) {
-					SQL_FetchString(hndl, 0, Name, sizeof(Name));
-					points = SQL_FetchFloat(hndl, 1);
-					ReplaceString(Name, sizeof(Name), "&lt;", "<");
-					ReplaceString(Name, sizeof(Name), "&gt;", ">");
-					ReplaceString(Name, sizeof(Name), "&#37;", "%");
-					ReplaceString(Name, sizeof(Name), "&#61;", "=");
-					ReplaceString(Name, sizeof(Name), "&#42;", "*");
-					number++;
-					Format(Value, sizeof(Value), "%i %s (%.2f)" , number, Name, points);
-					top.DrawText(Value);
-				}
-				Format(Value, sizeof(Value), "Close", client);
-				top.DrawItem(Value);
-				top.Send(client, RankPanelHandler, 20);
-				delete top;
-			} else {
-				LogError("Query failed (DisplayAfTop): %s", error);
-			}
+			ShowRank(client, target);
 		}
 	}
 }
@@ -1623,34 +1399,28 @@ public void DisplayTop(Handle owner, Handle hndl, const char[] error, any client
 }
 
 public Action cmdNextRank(int client, int args) {
-	if (client) {
-		if (IsClientInGame(client)) {
-			if (!IsFakeClient(client)) {
-				if(Players[client].rank > 0) {
-					Panel next = new Panel();
-					char buffer[128];
-					if (Players[client].rank == 1) {
-						Format(buffer, sizeof(buffer), "You are 1st", client);
-						next.SetTitle(buffer);
-					} else {
-						Format(buffer, sizeof(buffer), "Next Rank: %d", client, (Players[client].rank - 1));
-						next.SetTitle(buffer);
-						Format(buffer, sizeof(buffer), "Points required: %d", client, Players[client].points_for_next_rank);
-						next.DrawText(buffer);
-					}
-					Format(buffer, sizeof(buffer), "More...", client);
-					next.DrawItem(buffer);
-					Format(buffer, sizeof(buffer), "Close", client);
-					next.DrawItem(buffer);
-					next.Send(client, NextRankPanelHandler, 20);
-					delete next;
-				} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-					CPrintToChat(client, "{green}Sorry dude, you are part of the {blue}staff");
-				} else {
-					CPrintToChat(client, "Something is wrong with your data");
-				}
-			}
+	if(!IsRealClient(client)) return Plugin_Handled;
+	if(Players[client].rank > 0) {
+		Panel next = new Panel();
+		char buffer[128];
+		if (Players[client].rank == 1) {
+			next.SetTitle("You are 1st");
+		} else {
+			Format(buffer, sizeof(buffer), "Next Rank: %d", (Players[client].rank + 1));
+			next.SetTitle(buffer);
+			Format(buffer, sizeof(buffer), "Points required: %d", Players[client].points_for_next_rank);
+			next.DrawText(buffer);
 		}
+		Format(buffer, sizeof(buffer), "More...");
+		next.DrawItem(buffer);
+		Format(buffer, sizeof(buffer), "Close");
+		next.DrawItem(buffer);
+		next.Send(client, NextRankPanelHandler, 20);
+		delete next;
+	} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
+		CPrintToChat(client, "Sorry dude, you are part of the staff");
+	} else {
+		CPrintToChat(client, "We can't fetch your data");
 	}
 	return Plugin_Handled;
 }
@@ -1736,7 +1506,7 @@ public Action cmdColors(int client, int args)
 
 public Action cmdPlaytime(int client, int args) {
 	if(client) {
-		PrintToChat(client, "Your playtime on this map: %d", (GetTime() - Players[client].start_time)/60%60);
+		PrintToChat(client, "Your playtime on this map: %d", GetTime() - Players[client].start_time);
 	}
 }
 
@@ -1808,122 +1578,15 @@ public Action cmdFactor(int client, int args)
 }
 
 public Action cmdMapTop(int client, int args){
-	tplMapTop(client);
-}
-
-
-void tplMapTop(int client) {
-
-	// Inicializando variables
-	char playerNameBestBuffer[MAX_NAME_LENGTH] = "", // save name of top map player
-		playerNameWorstBuffer[MAX_NAME_LENGTH] = "", // save name of worse map player
-		playerNameHelperBuffer[MAX_NAME_LENGTH] = ""; // save name of best helper in map
-
-	int totalPoints = 0, // total points in map of all players
-		rankBestPlayer = 0, // Save the rank of map top player
-		rankWorstPlayer = 0, // Save the rank of worst map player
-		rankHelper = 0, // know rank for best helper
-		pointsLastPlayer = 0,
-		pointsCurrentWorstPlayer = 0,
-		pointsCurrentBestPlayer = 0,
-		counterCurrentHelper = 0, // know map best help
-		pointsCurrentHelper = 0; // Know points for best helper
-
-	// Loop client
-	for (int i = 1; i <= MaxClients; i++) {
-		// Check if is real client
-		if (IsRealClient(i)) {
-			// Get Client name
-			char clientName[MAX_NAME_LENGTH];
-			GetClientName(i, clientName, sizeof(clientName));
-			// Check if Points in map of player is > N>>J
-			if (Players[i].new_points > pointsLastPlayer) {
-				pointsCurrentBestPlayer = Players[i].new_points;
-				playerNameBestBuffer = clientName;
-				rankBestPlayer = Players[i].rank;
-			// Check if Points in map of player is < N>>J
-			} else if (Players[i].new_points < pointsLastPlayer) {
-				pointsCurrentWorstPlayer = Players[i].new_points;
-				playerNameWorstBuffer = clientName;
-				rankWorstPlayer = Players[i].rank;
-			}
-			// Best team helper on map
-			int myHelpAtMap = Players[i].friends_above + Players[i].friends_cured + Players[i].friends_revived + Players[i].friends_rescued;
-			// Check if is the best helper on map
-			if(myHelpAtMap > counterCurrentHelper) {
-				counterCurrentHelper = myHelpAtMap;
-				playerNameHelperBuffer = clientName;
-				rankHelper = Players[i].rank;
-				pointsCurrentHelper = Players[i].points;
-			}
-			totalPoints += Players[i].new_points; // sum of total points of all players in map
-			pointsLastPlayer = Players[i].new_points;
-		}
-	}
-	// Count tries of map
-	if (hm_count_fails.IntValue > 0) { 
-		// Calculate function is use to give a % of points according to tries
-		CPrintToChat(client, "Map total points: %d (%d)", totalPoints, calculatePoints(totalPoints));
-		// Print to chat Map best player
-		CPrintToChat(client, "[MVP] {blue}%s (rank: %d; points: %d [%d])", playerNameBestBuffer, rankBestPlayer, pointsCurrentBestPlayer, calculatePoints(pointsCurrentBestPlayer));
-		// Check if Helper name is not empty
-		if(!StrEqual(playerNameHelperBuffer, "")) {
-			// Print to Chat map best helper
-			CPrintToChat(client, "[Lifeguard] {blue}%s (rank: %d; points: %d [%d])", playerNameHelperBuffer, rankHelper, pointsCurrentHelper, calculatePoints(pointsCurrentHelper));
-		}
-	} else {
-		// if is first try and no need to calculate points
-		// PrintToChat Total points of map
-		PrintToChat(client, "Map total points: %d", totalPoints);
-		// Print to chat Map best player
-		CPrintToChat(client, "[MVP] {blue}%s (rank: %d; points: %d [%d])", playerNameBestBuffer, rankBestPlayer, pointsCurrentBestPlayer, calculatePoints(pointsCurrentBestPlayer));
-		// Verificando si existe mejor ayudante
-		if(!StrEqual(playerNameHelperBuffer, "")) {
-			// Print to Chat map best helper
-			CPrintToChat(client, "[Lifeguard] {blue}%s (rank: %d; points: %d [%d])", playerNameHelperBuffer, rankHelper, pointsCurrentHelper, calculatePoints(pointsCurrentHelper));
-		}
-	}
-	// Check if pointsCurrentBestPlayer player have points < 0 to print if not no print
-	if (pointsCurrentBestPlayer < 0) {
-		CPrintToChat(client, "[Noob] {blue}%s (rank: %d; points: %d [%d])", playerNameWorstBuffer, rankWorstPlayer, pointsCurrentWorstPlayer, calculatePoints(pointsCurrentWorstPlayer));
-	}
-	// Check tries of map and if > 0
-	if (hm_count_fails.IntValue > 0) {
-		// doueble check of tries map?
-		if (g_iFailedAttempts == 0) {
-			// Check is not print before to print
-			if (!g_isPrint) {
-
-				g_isPrint = true;
-				PrintToChatAll("The map was passed on the first try!");
-				// PrintToChatAll("VIP will receive + 20%%%% bonus points in this map.");
-				PrintToChatAll("All players will receive 100%%%% of their points earned for this map.");
-			}
-		}
-		else
-		{
-			// Check is not print before to print
-			if (!g_isPrint)
-			{
-				g_isPrint = true;
-				int porcent = 100 - g_iFailedAttempts * 10;
-				PrintToChatAll("It took %d attempts to finish this map!", g_iFailedAttempts);
-				// PrintToChatAll("VIP will receive + 20%%%% bonus points in this map.");
-				PrintToChatAll("All players will receive %d%%%% of their points earned for this map.", porcent);
-			}
-		}
-		// Print my map points in map with calculate according to tries
-		PrintToChat(client, "Your map points: %d (%d)", Players[client].new_points, calculatePoints(Players[client].new_points));
-	}
-	else
-	{
-		// Print my map points in map
-		PrintToChat(client, "Your map points: %d", Players[client].new_points);
-	}
+	RenderMatchInfo(client, false);
 }
 
 int calculatePoints(int points) {
-	return (points > 0) ? (RoundToZero( (points * 1.0) * ( 100.0 - (g_iFailedAttempts * 10.0) ) / 100.0)) : points;
+	if(points > 0 && g_iFailedAttempts > 0) {
+		float percent = (100.0 - g_iFailedAttempts * 10.0) / 100.0;
+		return RoundToZero(points * percent);
+	}
+	return points;
 }
 
 void GrantPlayerColor(int client) {
@@ -1983,34 +1646,12 @@ public Action TimedGrantPlayerColor(Handle timer, any client) {
 	GrantPlayerColor(client);
 }
 
-bool IsRealClient(int client)
-{
-	if(IsValidClient(client))
-	{
-		if(IsClientInGame(client))
-		{
-			if(!IsFakeClient(client))
-			{
-				return true;
-			}
-		}
-	}
-	return false;
+bool IsRealClient(int client) {
+	return IsValidClient(client) && IsClientInGame(client) && !IsFakeClient(client);
 }
 
-bool IsValidClient(int client)
-{
-	if (IsValidEntity(client))
-	{
-		if(client)
-		{
-			if(client <= MaxClients)
-			{
-				return true;
-			}
-		}
-	}
-	return true;
+bool IsValidClient(int client) {
+	return IsValidEntity(client) && client && client <= MaxClients;
 }
 
 public Action eventPlayerTeamPost(Event event, const char[] name, bool dontBroadcast) {
@@ -2222,13 +1863,13 @@ public Action cmdPointsOff(int client, int args) {
 
 public Action eventMapTransition(Event event, const char[] name, bool dontBroadcast) {
 	ADOnMapStart();
-	PrintMapPoints();
 	StopMapTiming();
+	PrintMapPoints();
 }
 
 public Action eventFinalWin(Event event, const char[] name, bool dontBroadcast){
-	PrintMapPoints();
-	StopMapTiming();
+	// StopMapTiming();
+	// PrintMapPoints();
 	UpdatePlayersStats();
 }
 
@@ -2237,7 +1878,7 @@ void PrintMapPoints() {
 		if (IsRealClient(i)) {
 			int bonus = calculatePointsForVip(i);
 			Players[i].new_points += bonus;
-			tplMapTop(i);
+			RenderMatchInfo(i, true);
 		}
 	}
 }
@@ -2287,16 +1928,19 @@ public Action cmdGivePoints(int client, int args) {
 }
 
 public void AddScore(int client, int Score) {
+	Players[client].new_points += Score;
 	if (Score > 0) {
 		if(g_pointsEnabled) {
 			PrintToChat(client, "\x05+%i", Score);
-			Players[client].new_points += Score;
 		}
 	} else if (Score < 0) {
 		PrintToChat(client, "\x04%i", Score);
-		Players[client].new_points += Score;
 		Players[client].points_lost += (-1 * Score);
 	}
+}
+
+public Action cmdChatColors(int client, int args) {
+	CPrintToChat(client, "{default}default\n{green}green\n{lightgreen}lightgreen\n{olive}olive");
 }
 
 public Action cmdRank(int client, int args) {
@@ -2311,7 +1955,7 @@ public Action cmdRank(int client, int args) {
 					// PlayerFetch(client);
 				// }
 			// }
-			ShowRank(client);
+			ShowRank(client, client);
 		}
 			
 		return Plugin_Handled;
@@ -2340,7 +1984,7 @@ public Action cmdRank(int client, int args) {
 			{
 				targetclient = target_list[i];
 
-				DisplayRank(targetclient, client);
+				ShowRank(client, targetclient);
 			}
 		}
 	}
@@ -2352,11 +1996,7 @@ public Action cmdRank(int client, int args) {
 	return Plugin_Handled;
 }
 
-public Action cmdUpdatePlayers(int client, int args) {
-	UpdatePlayersStats();
-}
-
-public Action onVote(int client, int args) {
+public Action OnAnyVote(int client, int args) {
 	PrintToChat(client, "\x01Vote access denied!");
 	return Plugin_Handled;
 }
@@ -2398,7 +2038,7 @@ public void StopMapTiming(){
 		char TimeLabel[32];
 		vGetTimeLabel(TotalTime, TimeLabel, sizeof(TimeLabel));
 		EmitSoundToAll(SOUND_MAPTIME_FINISH);
-		CPrintToChatAll("It took %s to finish this map!", TimeLabel);
+		CPrintToChatAll("\x05It took \x04%s\x05 to finish this map!", TimeLabel);
 	}
 }
 
@@ -2443,40 +2083,38 @@ public Action onMessage(int client, int args) {
 				// Inicializando variable
 				char message[256];
 				GetCmdArgString(message, sizeof(message));
-				message[ strlen(message)-1 ] = '\0';
+				StripQuotes(message);
 				// Verificando si tiene permisos como root
 				if(CheckCommandAccess(client, "sm_fk", ADMFLAG_ROOT, true)) {
 					// Imprimiendo mensaje 
-					CPrintToChatAll("\x03[\x04A\x03] {blue}%N: {default}%s", client, message[1]);
+					CPrintToChatAll("\x03[\x04A\x03] {blue}%N: {default}%s", client, message);
 				// Verificando si tiene permisos como moderador
 				} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
 					// Imprimiendo mensaje como mod
-					CPrintToChatAll("\03[\x04M\03] {blue}%N: {default}%s", client, message[1]);
+					CPrintToChatAll("\03[\x04M\03] {blue}%N: {default}%s", client, message);
 				// Verificando si tiene permisos como vip
 				} else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
 					// Verificando si pertenece al top 40
-					if(Players[client].rank > 0 && Players[client].rank < 40) {
+					if(Players[client].rank > 0 && Players[client].rank <= 99) {
 						// Imprimiendo mensaje
-						CPrintToChatAll("\x03[\x04V\x03]\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message[1]);
+						CPrintToChatAll("\x03[\x04V\x03]\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message);
 					} else {
 						// Imprimiendo mensaje
-						CPrintToChatAll("\x03[\x04V\x03]\x05 {blue}%N: {default}%s", client, message[1]);
+						CPrintToChatAll("\x03[\x04V\x03]\x05 {blue}%N: {default}%s", client, message);
 					}
 				// Verificando si pertene al top 40
-				} else if(Players[client].rank > 0 && Players[client].rank < 25) {
+				} else if(Players[client].rank > 0 && Players[client].rank <= 99) {
 					// Imprimiendo mensaje
-					CPrintToChatAll("\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message[1]);
+					CPrintToChatAll("\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message);
 				}
 				return Plugin_Handled;
 			}
 		} else {
-			// char message[256];
-			// GetCmdArgString(message, sizeof(message));
-			// CPrintToChatAll("\x04[\x05CONSOLE\x04] {default}%s ----", Players[client].rank, client, message);
+			char message[256];
+			GetCmdArgString(message, sizeof(message));
+			CPrintToChatAll("\x04[\x05CONSOLE\x04] {default}%s", message);
+			return Plugin_Handled;
 		}
-		
-	} else {
-		CPrintToChatAll("asdñklfhjasdfkhasd");
 	}
 	return Plugin_Continue;
 }
