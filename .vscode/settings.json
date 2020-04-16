@@ -10,5 +10,7 @@
     "**/include/*.inc": true,
     "**/compile": true,
     "**/spcomp*": true
-  }
+  },
+  "editor.tabSize": 2,
+  "editor.useTabStops": false
 }
