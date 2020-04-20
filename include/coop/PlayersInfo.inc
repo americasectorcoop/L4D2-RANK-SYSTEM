@@ -118,6 +118,7 @@ enum struct PlayersInfo {
     this.id = client;
     this.team_killer.id = client;
     this.team_vomit.id = client;
+    this.start_time = GetTime();
     GetClientName(client, this.name, MAX_NAME_LENGTH);
     GetClientAuthId(client, AuthId_Steam2, this.authid, 32);
     GetClientIP(client, this.ipv4, 16);

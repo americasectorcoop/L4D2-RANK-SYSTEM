@@ -1224,7 +1224,7 @@ public Action cmdColors(int client, int args)
 
 public Action cmdPlaytime(int client, int args) {
   if(client) {
-    PrintToChat(client, "Your playtime on this map: %d", GetTime() - Players[client].start_time);
+    PrintToChat(client, "Your playtime on this map: %d", Players[client].getTimeInMatch());
   }
 }
 
