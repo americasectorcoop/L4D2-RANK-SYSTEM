@@ -116,8 +116,6 @@ enum struct PlayersInfo {
 
   void store(int client) {
     this.id = client;
-    this.team_killer.id = client;
-    this.team_vomit.id = client;
     this.start_time = GetTime();
     GetClientName(client, this.name, MAX_NAME_LENGTH);
     GetClientAuthId(client, AuthId_Steam2, this.authid, 32);
@@ -125,7 +123,7 @@ enum struct PlayersInfo {
   }
 
   int getTimeInMatch() {
-    return GetTime() - RoundToCeil(GetClientTime(this.id));
+    return GetTime() - this.start_time;
   }
 
   char getQuery() {
