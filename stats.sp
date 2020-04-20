@@ -775,8 +775,8 @@ public Action OnPlayerNowIt(Event event, const char[] name, bool dontBroadcast) 
       } else if(bPlayerInDistress(victim)) score *= 2;
       Players[attacker].addPoints(score);
       PunishVomiter(attacker, (score * -1));
-      CPrintToChat(victim, "{blue}%N {default}vomited you! \x04[\x05%i vomitTK\x04]", attacker, Players[attacker].vomit_tk_block_damage);
-      CPrintToChat(attacker, "{blue}You {default}vomited {blue}%N ! \x04[\x05%i vomitTK\x04]", victim, Players[attacker].vomit_tk_block_damage);
+      CPrintToChat(victim, "{blue}%N {default}vomited you! \x04[\x05%i vomitTK\x04]", attacker, Players[attacker].team_vomit.counter);
+      CPrintToChat(attacker, "{blue}You {default}vomited {blue}%N ! \x04[\x05%i vomitTK\x04]", victim, Players[attacker].team_vomit.counter);
     }
   }
   return Plugin_Continue;

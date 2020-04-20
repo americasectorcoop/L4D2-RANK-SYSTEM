@@ -1,5 +1,4 @@
 enum struct PlayerDamage {
-  int id;
   int counter;
   bool voted;
 
@@ -109,10 +108,6 @@ enum struct PlayersInfo {
   int server_left;
   int spokentime;
   int start_time;
-  int tk_block_damage;
-  int tk_block_punishment;
-  int vomit_tk_block_damage;
-  int vomit_tk_block_punishment;
   // numero de kicks en la ronda...
   int vote_kick;
 
