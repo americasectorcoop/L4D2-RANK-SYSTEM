@@ -56,9 +56,6 @@
 // Numero de puntos negativos para patear a un jugador 
 #define POINTS_NEGATIVE_FOR_KICK_PLAYERS -2000
 
-#define VOMIT_TK_BLOCK_MIN 70
-#define VOMIT_TK_BLOCK_MAX 240
-
 #define SOUND_MAPTIME_START "level/countdown.wav"
 #define SOUND_MAPTIME_FINISH "level/bell_normal.wav"
 #define SOUND_JOIN "ui/beepclear.wav"
@@ -78,8 +75,8 @@ int g_iStatsBalans = 0;
 // Numero de jugadores registrados
 int g_iRegisteredPlayers = 0;
 int g_iFailedAttempts = 0;
-int g_iTkBlockMin = 70;
-int g_iTkBlockMax = 240;
+// int g_iTkBlockMin = 70;
+// int g_iTkBlockMax = 240;
 
 float g_fRankSum = 0.0;
 float g_fMapTimingStartTime = -1.0;
@@ -103,14 +100,12 @@ ConVar cvar_Tank;
 ConVar SDifficultyMultiplier;
 ConVar l4d2_difficulty_multiplier;
 
-// DBResultSet playerData;
-
 #include <coop/stock>
 #include <coop/PlayersInfo>
 #include <coop/autodifficulty>
 #include <coop/damage>
 #include <coop/MapPlayerTop>
-
+#include <coop/PlayerPunishments>
 
 public Plugin myinfo = {
   name = "Rank System",
@@ -147,30 +142,30 @@ public void OnPluginStart() {
   cvar_Tank = CreateConVar("l4d2_tystats_tank", "10", "Base score for killing a Tank");
 
   // HookEvent("player_changename", EVENT_PLAYER_CHANGE_NAME);
-  HookEvent("player_spawn", eventPlayerSpawn);
+  HookEvent("player_spawn", OnPlayerSpawn);
   HookEvent("witch_killed", OnEventWitchKilled);
-  HookEvent("witch_harasser_set", eventWitchDisturb);
+  HookEvent("witch_harasser_set", OnWitchDisturb);
 
   HookEvent("player_death", OnPlayerDeath);
-  HookEvent("player_incapacitated", eventPlayerIncap);
-  HookEvent("player_hurt", eventPlayerHurt);
-  HookEvent("round_start", eventRoundStart);
-  HookEvent("heal_success", eventHealPlayer);
-  HookEvent("defibrillator_used", eventDefigPlayer);
-  HookEvent("revive_success", eventReviveSuccess);
-  HookEvent("player_now_it", eventPlayerNowIt);
-  HookEvent("survivor_rescued", eventSurvivorRescued);
-  HookEvent("award_earned", eventAward);
-  HookEvent("player_team", eventPlayerTeamPost, EventHookMode_Post);
-  HookEvent("map_transition", eventMapTransition);
-  HookEvent("finale_win", eventFinalWin);
-  HookEvent("player_left_start_area", eventStartAreaPost, EventHookMode_Post);
-  HookEvent("player_left_checkpoint", eventStartAreaPost, EventHookMode_Post);
-  HookEvent("round_end", eventRoundEnd);
-  HookEvent("molotov_thrown", eventMolotovThrown);
-  HookEvent("melee_kill", eventMeleeKill);
-  HookEvent("tank_spawn", eventTankSpawn); 
-  HookEvent("tank_killed", eventTankKilled);
+  HookEvent("player_incapacitated", OnPlayerIncap);
+  HookEvent("player_hurt", OnPlayerHurt);
+  HookEvent("round_start", OnRoundStart);
+  HookEvent("heal_success", OnPlayerHelp);
+  HookEvent("defibrillator_used", OnPlayerDefig);
+  HookEvent("revive_success", OnReviveSuccess);
+  HookEvent("player_now_it", OnPlayerNowIt);
+  HookEvent("survivor_rescued", OnPlayerRescued);
+  HookEvent("award_earned", OnAward);
+  HookEvent("player_team", OnPlayerTeamPost, EventHookMode_Post);
+  HookEvent("map_transition", OnMapTransition);
+  HookEvent("finale_win", OnFinalWin);
+  HookEvent("player_left_start_area", OnStartAreaPost, EventHookMode_Post);
+  HookEvent("player_left_checkpoint", OnStartAreaPost, EventHookMode_Post);
+  HookEvent("round_end", OnRoundEnd);
+  HookEvent("molotov_thrown", OnMolotovThrown);
+  HookEvent("melee_kill", OnMeleeKill);
+  HookEvent("tank_spawn", OnTankSpawn); 
+  HookEvent("tank_killed", OnTankKilled);
 
 
   AddCommandListener(Command_Setinfo, "setinfo");
@@ -191,8 +186,8 @@ public void OnPluginStart() {
   RegConsoleCmd("sm_ranksum", cmdRankSum);
   RegConsoleCmd("sm_frags", cmdFrags);
 
-  RegConsoleCmd("say", onMessage);
-  RegConsoleCmd("say_team", onMessage);
+  RegConsoleCmd("say", OnMessage);
+  RegConsoleCmd("say_team", OnMessage);
 
   // RegAdminCmd("sm_updateplayers", cmdUpdatePlayers, ADMFLAG_ROOT, "Envia los puntos al servidor");
   RegAdminCmd("sm_points_on", cmdPointsOn, ADMFLAG_GENERIC, "Activa los puntos de la partida");
@@ -212,6 +207,19 @@ public void OnPluginStart() {
 
   // WE FORCE TO RUNNING MAP START EVENT WHEN PLUGIN IS LOADED/RELOADED
   CreateTimer(1.0, MapStart);
+}
+
+public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
+  CreateNative("TYSTATS_GetPoints", Native_TYSTATS_GetPoints);
+  CreateNative("TYSTATS_GetRank", Native_TYSTATS_GetRank);
+  CreateNative("TYSTATS_GetPlayTime", Native_TYSTATS_GetPlayTime);
+  MarkNativeAsOptional("KarmaBan");
+  return APLRes_Success;
+}
+
+public void OnAllPluginsLoaded() {
+  DamageOnAllPluginsLoaded();
+  PunishmentsOnAllPluginsLoaded();
 }
 
 void OnDatabaseConnected() {
@@ -274,21 +282,14 @@ public void OnFetchTotalPlayers(Database db, DBResultSet results, const char[] e
 }
 
 public void OnClientDisconnect(int client) {
-
-  if(IsRealClient(client)) {
-  
-    updatePlayer(client);
-
-    DMOnClientDisconnect(client);
-
-    PlayerReset(client);
-    
-    g_iTankDamage[client][0] = 0;
-    
-    for(int i = 1;i <= MaxClients; i++) {
-      g_iTankDamage[client][i] = 0;
-      g_bPlayerIgnore[client][i] = false;
-    }
+  if(!IsRealClient(client)) return;
+  UpdatePlayer(client);
+  DMOnClientDisconnect(client);
+  PlayerReset(client);
+  g_iTankDamage[client][0] = 0;
+  for(int i = 1;i <= MaxClients; i++) {
+    g_iTankDamage[client][i] = 0;
+    g_bPlayerIgnore[client][i] = false;
   }
 }
 
@@ -373,7 +374,7 @@ public void UpdatePlayersStats() {
   g_database.Execute(transaction, onPlayerUpdated, OnUpdatePlayersStatsFailure, _, DBPrio_High);
 }
 
-public void updatePlayer(int client) {
+public void UpdatePlayer(int client) {
   if(IsRealClient(client)) {
     // Instanciando metodo de trasaction
     Transaction transaction = new Transaction();
@@ -426,29 +427,29 @@ void GetTotalPlayers() {
   g_database.Query(OnFetchTotalPlayers, query, _, DBPrio_High);
 }
 
-public Action eventTankSpawn(Event event, const char[] name, bool dontBroadcast) {
+public Action OnTankSpawn(Event event, const char[] name, bool dontBroadcast) {
   int tank = GetClientOfUserId(event.GetInt("userid"));
   g_iTankHealth[tank] = GetClientHealth(tank);
   GetClientName(tank, g_sTankName[tank], MAX_LINE_WIDTH);
 }
 
-public Action eventTankKilled(Event event, const char[] name, bool dontBroadcast) {
+public Action OnTankKilled(Event event, const char[] name, bool dontBroadcast) {
   int tank = GetClientOfUserId(event.GetInt("userid"));
   GetClientName(tank, g_sTankName[tank], MAX_LINE_WIDTH);
   printTotalDamageTank(tank);
 }
 
-public Action eventMeleeKill(Event event, const char[] name, bool dontBroadcast) {
+public Action OnMeleeKill(Event event, const char[] name, bool dontBroadcast) {
   int client = GetClientOfUserId(event.GetInt("userid"));
   Players[client].melee_kills++; 
 }
 
-public Action eventMolotovThrown(Event event, const char[] name, bool dontBroadcast) {
+public Action OnMolotovThrown(Event event, const char[] name, bool dontBroadcast) {
   int client = GetClientOfUserId(event.GetInt("userid"));
   CPrintToChatAll("{blue}%N \x01thrown a {blue}molotov", client);
 }
 
-public Action eventRoundStart(Event event, const char[] name, bool dontBroadcast) {
+public Action OnRoundStart(Event event, const char[] name, bool dontBroadcast) {
   ADRoundStart();
   g_pointsEnabled = true;
   g_isRoundStarted = true;
@@ -462,7 +463,7 @@ public Action eventRoundStart(Event event, const char[] name, bool dontBroadcast
   return Plugin_Continue;
 }
 
-public Action eventRoundEnd(Event event, const char[] name, bool dontBroadcast) {
+public Action OnRoundEnd(Event event, const char[] name, bool dontBroadcast) {
   if (!g_isRoundStarted) {
     return;
   }
@@ -489,7 +490,7 @@ public void OnClientPostAdminCheck(int client) {
   }
 }
 
-public Action eventWitchDisturb(Event event, const char[] name, bool dontBroadcast) {
+public Action OnWitchDisturb(Event event, const char[] name, bool dontBroadcast) {
   int client = GetClientOfUserId(event.GetInt("userid"));
   if(client) {
     if(IsValidEntity(client)) {
@@ -506,8 +507,8 @@ public Action OnEventWitchKilled(Event event, const char[] name, bool dontBroadc
   if(!IsRealClient(client)) return Plugin_Continue;
   int score = cvar_Witch.IntValue + g_iStatsBalans + Players[client].bonus_points;
   Players[client].kill_witches += 1;
-  CPrintToChatAll("{blue}%N {green}killed {blue}Witch",client);
-  AddScore(client, score);
+  Players[client].addPoints(score);
+  CPrintToChatAll("{blue}%N {green}killed {blue}Witch", client);
   return Plugin_Continue;
 }
 
@@ -538,8 +539,7 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
             // Verificando que pertenezca al equipo de sobrevivientes
             if(GetClientTeam(attacker) == TEAM_SURVIVORS) {
               score = -50;
-              Players[attacker].tk_block_damage += 30;
-              pusnishTeamKiller(attacker);
+              PunishTeamKiller(attacker, 30);
               CPrintToChatAll("{blue}%N {default}killed {blue}%N", attacker, victim);
               Players[attacker].friends_killed += 1;
             }
@@ -585,10 +585,12 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
             PrintCenterText(attacker, "Infected killed: %d", Players[attacker].kill_zombies);
           }
         } else {
-          PrintToChatAll("[stats] Asesinato de %s", victim_name);
+          // Eventos detectados
+          // Witch
+          // PrintToChatAll("[stats] Asesinato de %s", victim_name);
         }
       }
-      AddScore(attacker, score);
+      Players[attacker].addPoints(score);
     } else {
       CPrintToChatAll("%N se ha suicidado :O", attacker);
     }
@@ -625,33 +627,17 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
   return Plugin_Continue;
 }
 
-public Action eventPlayerIncap(Event event, const char[] name, bool dontBroadcast) {
+public Action OnPlayerIncap(Event event, const char[] name, bool dontBroadcast) {
   int attacker = GetClientOfUserId(event.GetInt("attacker"));
   int victim = GetClientOfUserId(event.GetInt("userid"));
-  if (attacker) {
-    if (!IsFakeClient(attacker)) {
-      if(!IsFakeClient(victim)) {
-        if (attacker != victim) {
-          if (GetClientTeam(attacker) == TEAM_SURVIVORS) {
-            if (GetClientTeam(victim) == TEAM_SURVIVORS) {
-              Players[attacker].tk_block_damage += 25;
-              CPrintToChat(victim, "{blue}%N \x05incapacitated {blue}you", attacker);
-              CPrintToChat(attacker, "{blue}You \x05incapacitated {blue}%N \x04[\x05%i TK\x04]", victim, Players[attacker].tk_block_damage);
-              pusnishTeamKiller(attacker);
-              // if(DEBUG) {
-                // CPrintToChatAll("se suma aqui la variable de: PLAYER_FRIENDS_INCAPPED");
-              // }
-              Players[attacker].friends_incapped += 1;
-              if(Players[attacker].bonus_points > 0) {
-                Players[attacker].bonus_points--;
-              }
-              AddScore(attacker, -10);
-            }
-          }
-        }
-      }
-    }
-  }
+  if(!IsRealClient(attacker) || !IsRealClient(victim)) return Plugin_Continue;
+  if (attacker == victim) return Plugin_Continue;
+  if (GetClientTeam(attacker) != TEAM_SURVIVORS || GetClientTeam(victim) != TEAM_SURVIVORS) return Plugin_Continue;
+  CPrintToChat(victim, "{blue}%N \x05incapacitated {blue}you", attacker);
+  CPrintToChat(attacker, "{blue}You \x05incapacitated {blue}%N", victim);
+  PunishTeamKiller(attacker, 25);
+  Players[attacker].friends_incapped += 1;
+  Players[attacker].addPoints(-10);
   return Plugin_Continue;
 }
 
@@ -689,231 +675,119 @@ public Action eventPlayerIncap(Event event, const char[] name, bool dontBroadcas
 // else
 // {
 // }
-public Action eventPlayerHurt(Event event, const char[] name, bool dontBroadcast) {
+public Action OnPlayerHurt(Event event, const char[] name, bool dontBroadcast) {
   int attacker = GetClientOfUserId(event.GetInt("attacker"));
-  if (attacker) {
-    int damage = event.GetInt("dmg_health");
-    // Damage es mayor a 0
-    if (damage > 0) {
-      int target = GetClientOfUserId(event.GetInt("userid"));
-      // Verificando que atacante sea diferente del objetivo
-      if (attacker != target) {
-        // Verificando que el atacante sea real
-        if (!IsFakeClient(attacker)) {
-        // Verificando si el atacante es del equivo de sobrevivientes
-          int team_target = GetClientTeam(target);
-          // Verificando si el objetico es del equivo de sobrevivientes
-          if(team_target == TEAM_SURVIVORS) {
-            // Verificando que el target sea real
-            if(!IsFakeClient(target)) {
-              int Score = 1;
-              Score = (Players[attacker].bonus_points > 0) ? ((Score * -damage) / 2) : ((Score * -damage));
-              Score = (Score == 0) ? -1 : Score;
-              Players[attacker].tk_block_damage += (-1*Score);
-              CPrintToChat(target, "{blue}%N \x05attacked {blue}you \x04[\x05%i TK\x04]", attacker, Players[attacker].tk_block_damage);
-              CPrintToChat(attacker, "{blue}You \x05attacked {blue}%N \x04[\x05%d TK\x04]", target, Players[attacker].tk_block_damage);
-              AddScore(attacker, Score);
-              pusnishTeamKiller(attacker);
-            }
-          // Verificando si es del equipo de infectados
-          } else if(team_target == TEAM_INFECTED) {
-            int special_infected = GetEntProp(target, Prop_Send, "m_zombieClass");
-            if(special_infected == ZC_TANK) {
-              int health = GetClientHealth(target);
-              if(!bIsPlayerIncapped(target) && health > 0) {
-                if(damage > health) {
-                  damage = health;
-                }
-                g_iTankDamage[target][attacker] += damage;
-              }
-            }
-          }
+  int target = GetClientOfUserId(event.GetInt("userid"));
+  int damage = event.GetInt("dmg_health");
+  if(!IsRealClient(attacker) || damage == 0) return Plugin_Continue;
+  if (attacker == target) return Plugin_Continue;
+  // Verificando si el atacante es del equivo de sobrevivientes
+  int team_target = GetClientTeam(target);
+  // Verificando si el objetico es del equivo de sobrevivientes
+  if(team_target == TEAM_SURVIVORS && !IsFakeClient(target)) {
+    CPrintToChat(target, "{blue}%N \x05attacked {blue}you \x04[\x05%i TK\x04]", attacker, damage);
+    CPrintToChat(attacker, "{blue}You \x05attacked {blue}%N \x04[\x05%d TK\x04]", target, damage);
+    Players[attacker].addPoints(damage);
+    PunishTeamKiller(attacker, damage);
+  } else if(team_target == TEAM_INFECTED) {
+    int special_infected = GetEntProp(target, Prop_Send, "m_zombieClass");
+    if(special_infected == ZC_TANK) {
+      int health = GetClientHealth(target);
+      if(!bIsPlayerIncapped(target) && health > 0) {
+        if(damage > health) {
+          damage = health;
         }
+        g_iTankDamage[target][attacker] += damage;
       }
     }
   }
   return Plugin_Continue;
 }
 
-public Action eventHealPlayer(Event event, const char[] name, bool dontBroadcast) {
+public Action OnPlayerHelp(Event event, const char[] name, bool dontBroadcast) {
   int client = GetClientOfUserId(event.GetInt("userid"));	
   int target = GetClientOfUserId(event.GetInt("subject"));
-  if(!IsFakeClient(target)) {
-    if(!IsFakeClient(client)) {
-      if (target != client) {
-        Players[client].tk_block_damage = Players[client].tk_block_damage - 16;
-        if (Players[client].tk_block_damage <= 0) {
-          Players[client].tk_block_damage = 0;
-        }
-        int Score = 0;
-        int restored = event.GetInt("health_restored");
-        Players[client].friends_cured += 1;
-        if (restored > 49) {
-          Score = 4;
-          Players[client].bonus_points += 1;
-        } else {
-          Score = 1;
-        }
-        AddScore(client, Score);
-      } else {
-        Players[client].self_cured += 1;
-      }
+  if(!IsRealClient(client) || !IsRealClient(target)) return Plugin_Continue;
+  if (target != client) {
+    Players[client].team_killer.subtract(16);
+    int restored = event.GetInt("health_restored");
+    Players[client].friends_cured += 1;
+    if (restored > 49) {
+      Players[client].addPoints(4);
+      Players[client].addBonusPoints();
+    } else {
+      Players[client].addPoints(1);
     }
+  } else {
+    Players[client].self_cured += 1;
   }
   return Plugin_Continue;
 }
 
-public Action eventDefigPlayer(Event event, const char[] name, bool dontBroadcast){
-  int Recipient = GetClientOfUserId(event.GetInt("subject"));
-  int Giver = GetClientOfUserId(event.GetInt("userid"));
-  if (!IsFakeClient(Recipient)) {
-    if(!IsFakeClient(Giver)) {
-      if (Recipient != Giver) {
-        Players[Giver].bonus_points += 1;
-        Players[Giver].friends_revived += 1;
-        AddScore(Giver, 3);
-      }
-    }
-  }
+public Action OnPlayerDefig(Event event, const char[] name, bool dontBroadcast){
+  int subject = GetClientOfUserId(event.GetInt("subject"));
+  int savior = GetClientOfUserId(event.GetInt("userid"));
+  if(!bRealClients(savior, subject)) return Plugin_Continue;
+  Players[savior].addBonusPoints();
+  Players[savior].friends_revived += 1;
+  Players[savior].addPoints(3);
   return Plugin_Continue;
 }
 
-public Action eventReviveSuccess(Event event, const char[] name, bool dontBroadcast) {
+public Action OnReviveSuccess(Event event, const char[] name, bool dontBroadcast) {
   int target = GetClientOfUserId(event.GetInt("subject"));
   int client = GetClientOfUserId(event.GetInt("userid"));
-  if (!IsFakeClient(target)) {
-    if(!IsFakeClient(client)) {
-      if (target != client) {
-        Players[client].tk_block_damage = Players[client].tk_block_damage - 8;
-        if (Players[client].tk_block_damage <= 0) {
-          Players[client].tk_block_damage = 0;
-        }
-        Players[client].friends_above += 1;
-        if(!event.GetBool("ledge_hang")) {
-          Players[client].bonus_points += 1;
-        }
-        AddScore(client, 2);
-        GrantPlayerColor(target);
-      }
-    }
+  if(!bRealClients(target, client)) return Plugin_Continue;
+  Players[client].friends_above += 1;
+  Players[client].team_killer.subtract(8);
+  if(!event.GetBool("ledge_hang")) {
+    Players[client].addBonusPoints();
   }
+  Players[client].addPoints(2);
+  Players[target].renderColor();
   return Plugin_Continue;
 }
 
-public Action eventPlayerNowIt(Event event, const char[] name, bool dontBroadcast) {
+public Action OnPlayerNowIt(Event event, const char[] name, bool dontBroadcast) {
+  if(GetEventBool(event, "by_boomer")) return Plugin_Continue;
   int attacker = GetClientOfUserId(event.GetInt("attacker"));
   int victim = GetClientOfUserId(event.GetInt("userid"));
-  bool by_boomer = GetEventBool(event, "by_boomer");
-  if(!by_boomer) {
-    if (attacker > 0) {
-      // Verificando que el atacante este en juego
-      if(IsClientInGame(attacker)) {
-        // Verificando que sea un atacante real
-        if(!IsFakeClient(attacker)) {
-          // verificando que victima este en juego
-          if(IsClientInGame(victim)) {
-            // verificando que sea diferente el atacante y de la victima
-            if(attacker != victim) {
-              int team_victim = GetClientTeam(victim);
-              int Score = 0;
-              // Verificando grupo de la victima
-              switch(team_victim) {
-                case TEAM_INFECTED: {
-                  int zombieClass = iGetZombieClass(victim);
-                  // Verificando clase del vomiton
-                  switch(zombieClass) {
-                    case ZC_WITCH: {
-                      CPrintToChatAll("{blue}%N {default}vomit {blue}witch", attacker);
-                      Score = 10;
-                    }
-                    case ZC_TANK: {
-                      CPrintToChatAll("{blue}%N {default}vomit {blue}Tank", attacker);
-                      Score = 8;
-                    }
-                  }
-                  AddScore(attacker, Score);
-                  return Plugin_Continue;
-                }
-                case TEAM_SURVIVORS: {
-                  if (!IsFakeClient(victim)) {
-                    Score = 5;
-                    // Verificando si el tank esta vivo
-                    if (IsTankAlive()) {
-                      // Verificando si el jugador esta incapacitado o colgado
-                      if(IsIncapacitated(victim) || bIsPlayerGrapEdge(victim)) {
-                        Score *= 3;
-                      } else {
-                        Score *= 2;
-                      }
-                    } else {
-                      // Verificando si el jugador esta incapacitado o colgado
-                      if(IsIncapacitated(victim) || bIsPlayerGrapEdge(victim)) {
-                        Score *= 2;
-                      }
-                    }
-                    Players[attacker].vomit_tk_block_damage += Score;
-                    AddScore(attacker, (Score * -1));
-                    punishTeamVomiter(attacker);
-                    CPrintToChat(victim, "{blue}%N {default}vomited you! \x04[\x05%i vomitTK\x04]", attacker, Players[attacker].vomit_tk_block_damage);
-                    CPrintToChat(attacker, "{blue}You {default}vomited {blue}%N ! \x04[\x05%i vomitTK\x04]", victim, Players[attacker].vomit_tk_block_damage);
-                    return Plugin_Continue;
-                  }
-                }
-              }
-            }
-          }
-        }
+    // Verificando que el atacante este en juego
+  if(IsRealClient(attacker) && IsClientInGame(victim) && attacker != victim) {
+    int score = 0;
+    int team_victim = GetClientTeam(victim);
+    // Verificando grupo de la victima
+    if(team_victim == TEAM_INFECTED) {
+      int zombie_class = iGetZombieClass(victim);
+      if(zombie_class == ZC_WITCH) {
+        CPrintToChatAll("{blue}%N {default}was brave enough to vomit the {blue}witch", attacker);
+        score = 10;
+      } else if(zombie_class == ZC_TANK) {
+        CPrintToChatAll("{blue}%N {default}vomit {blue}Tank", attacker);
+        score = 8;
       }
+      Players[attacker].addPoints(score);
+    } else if(team_victim == TEAM_SURVIVORS && !IsFakeClient(victim)) {
+      score = -5;
+      if (IsTankAlive()) {
+        if(bPlayerInDistress(victim)) score *= 4;
+        else score *= 3;
+      } else if(bPlayerInDistress(victim)) score *= 2;
+      Players[attacker].addPoints(score);
+      PunishVomiter(attacker, (score * -1));
+      CPrintToChat(victim, "{blue}%N {default}vomited you! \x04[\x05%i vomitTK\x04]", attacker, Players[attacker].vomit_tk_block_damage);
+      CPrintToChat(attacker, "{blue}You {default}vomited {blue}%N ! \x04[\x05%i vomitTK\x04]", victim, Players[attacker].vomit_tk_block_damage);
     }
   }
   return Plugin_Continue;
 }
 
-/**
- * Metodo para castigar a un vomiton
- * @param {integer} client
- * @return {void}
- */
-void punishTeamVomiter(int client) { 
-
-  // Verificando si el cliente ya supero el vomito
-  if ( Players[client].vomit_tk_block_damage > VOMIT_TK_BLOCK_MIN ) {
-
-    if ( Players[client].vomit_tk_block_damage > VOMIT_TK_BLOCK_MAX ) {
-
-      if ( Players[client].vomit_tk_block_punishment < VOMIT_TK_BLOCK_MAX ) {
-        
-        if (IsValidEntity(client) && IsClientInGame(client) && IsClientConnected(client) && !IsFakeClient(client) && IsPlayerAlive(client)) {
-          CPrintToChatAll("{blue}%N {default}has been slayed \x04[\x05%i vomitTK\x05]", client, Players[client].vomit_tk_block_damage);
-          Players[client].vomit_tk_block_punishment = Players[client].vomit_tk_block_damage;
-          ServerCommand("sm_cancelvote");
-          ServerCommand("sm_slay #%d", GetClientUserId(client));
-          Players[client].vomit_tk_block_damage = 0;
-        }
-      }
-    } else if ((Players[client].vomit_tk_block_damage - Players[client].vomit_tk_block_punishment) > VOMIT_TK_BLOCK_MIN) {
-      if (IsValidEntity(client) && IsClientInGame(client) && IsClientConnected(client) && !IsFakeClient(client) && IsPlayerAlive(client)) {
-        Players[client].vomit_tk_block_punishment = Players[client].vomit_tk_block_damage;
-        CPrintToChatAll("Auto {blue}voteslay against {blue}%N [%i vomitTK]", client, Players[client].vomit_tk_block_damage);
-        ServerCommand("sm_voteslay #%d", GetClientUserId(client));
-      }
-    }
-  }
-}
-
-public Action eventSurvivorRescued(Event event, const char[] name, bool dontBroadcast) {
+public Action OnPlayerRescued(Event event, const char[] name, bool dontBroadcast) {
   int client = GetClientOfUserId(event.GetInt("rescuer"));
   int target = GetClientOfUserId(event.GetInt("victim"));
-  if (IsValidClient(client)) {
-    if(!IsFakeClient(client)) {
-      if(IsValidClient(target)) {
-        if(!IsFakeClient(target)) {
-          Players[client].friends_rescued += 1;
-          AddScore(client, 2);
-        }
-      }
-    }
-  }
+  if(!IsRealClient(client) || !IsRealClient(target)) return Plugin_Continue;
+  Players[client].friends_rescued += 1;
+  Players[client].addPoints(2);
   return Plugin_Continue;
 }
 
@@ -923,79 +797,58 @@ public Action eventSurvivorRescued(Event event, const char[] name, bool dontBroa
  * @param string name
  * @param bool  dontBroadcast
  */
-public Action eventAward(Event event, const char[] name, bool dontBroadcast) {
+public Action OnAward(Event event, const char[] name, bool dontBroadcast) {
   // Obteniendo el id del cliente
   int client = GetClientOfUserId(event.GetInt("userid"));
-  // Verificando que el cliente no sea falso
-  if (!IsFakeClient(client)) {
-    // Obteniendo el del logro
-    int adward_id = event.GetInt("award");
-    int target = event.GetInt("subjectentid");
-    // Creando switch para id del logro
-    switch(adward_id) {
-      // Protect friendly
-      case 67: {
-        // Verificando que el objetivo sea valido
-        if(target) {
-          Players[client].friends_protected += 1;
+  int adward_id = event.GetInt("award");
+  int subjectentid = event.GetInt("subjectentid");
+  if(!IsRealClient(client)) return Plugin_Continue;
+  // Creando switch para id del logro
+  switch(adward_id) {
+    // Protect friendly
+    case 67: {
+      if(IsRealClient(GetClientOfUserId(GetClientUserId(subjectentid)))) {
+        Players[client].friends_protected += 1;
+      }
+    }
+    // Pills given
+    case 68: {
+      int target = GetClientOfUserId(GetClientUserId(subjectentid));
+      if (IsRealClient(target)) {
+        givePills(client, target);
+      }
+    }
+    // Adrenaline given
+    case 69: {
+      int target = GetClientOfUserId(GetClientUserId(subjectentid));
+      if (IsRealClient(target)) {
+        giveAdrenaline(client, target);
+      }
+    }
+    // Kill Tank with no deaths
+    case 81: {
+      Players[client].kill_tanks_without_deaths += 1;
+    }
+    // Incap friendly
+    case 85: {
+      int target = GetClientOfUserId(GetClientUserId(subjectentid));
+      // Verificando que el objetivo sea valido
+      if (IsRealClient(target)) {
+        // Verificando que cliente y el objetivo sean del equipo de sobrevivientes
+        if ( GetClientTeam(client) == TEAM_SURVIVORS && GetClientTeam(target) == TEAM_SURVIVORS) {
+          // Sumando al cliente una incapacitacion
+          Players[client].friends_incapped += 1;
         }
-        return Plugin_Continue;
       }
-      // Pills given
-      case 68: {
-        // Verificando que el objetivo sea valido
-        if (target) {
-          // Dando pildoras 
-          givePills(client, GetClientOfUserId(GetClientUserId(target)));
-        }
-        return Plugin_Continue;
-      }
-      // Adrenaline given
-      case 69: {
-        // Verificando que el objetivo sea valido
-        if (target) {
-          // Dando adrenalina
-          giveAdrenaline(client, GetClientOfUserId(GetClientUserId(target)));
-        }
-        return Plugin_Continue;
-      }
-      // Kill Tank with no deaths
-      case 81: {
-        // Sumando al cliente un asesinato de tank sin morir
-        Players[client].kill_tanks_without_deaths += 1;
-        return Plugin_Continue;
-      }
-      // Incap friendly
-      case 85: {
-        // Verificando que el objetivo sea valido
-        if (target) {
-          // Obteniendo el id del objetivo
-          target = GetClientOfUserId(GetClientUserId(target));
-          // Verificando que cliente y el objetivo sean del equipo de sobrevivientes
-          if ( GetClientTeam(client) == TEAM_SURVIVORS && GetClientTeam(target) == TEAM_SURVIVORS) {
-            // Sumando al cliente una incapacitacion
-            Players[client].friends_incapped += 1;
-            // if(DEBUG) {
-            // 	PrintToChatAll("se suma aqui la variable de: PLAYER_FRIENDS_INCAPPED");
-            // }
-          }
-        }
-        return Plugin_Continue;
-      }
-      // Left friendly for dead
-      case 86: {
-        // Sumando al jugador una muerte culposa
-        Players[client].left4dead += 1;
-        return Plugin_Continue;
-      }
-      // Let infected in safe room
-      case 95: {
-        // if(DEBUG) {
-        // 	PrintToChatAll("Se dejo en el saferoom infectados especiales");
-        // }
-        Players[client].infected_let_in_safehouse += 1;
-        return Plugin_Continue;
-      }
+    }
+    // Left friendly for dead
+    case 86: {
+      // Sumando al jugador una muerte culposa
+      Players[client].left4dead += 1;
+    }
+    // Let infected in safe room
+    case 95: {
+      Players[client].infected_let_in_safehouse += 1;
     }
   }
   return Plugin_Continue;
@@ -1020,109 +873,6 @@ void giveAdrenaline(int giver, int recipient) {
       g_iAdrenalineGiven[adrenalineId] = 1;
       if (!IsFakeClient(giver)) {
         Players[giver].friends_adrenaline_given += 1;
-      }
-    }
-  }
-}
-
-/**
-* Metodo para castigar a un jugador
-* @param {int} client
-*/
-public void pusnishTeamKiller(int client) {
-  // Verificando que sea un cliente valido
-  if (IsValidEntity(client)) {
-    // Verificando que el cliente este en juego
-    if(IsClientInGame(client)) {
-      // Verificando que el cliente este conectado
-      if(IsClientConnected(client)) {
-        // Verificando que el cliente no sea falso
-        if(!IsFakeClient(client)) { 
-          // Verificando si el cliente tiene puntos a menos 500
-          if(Players[client].points >= -1000) {
-            // Verificando si el cliente ya supero el limite TK
-            if (Players[client].tk_block_damage > g_iTkBlockMin) {
-              if (Players[client].tk_block_damage > g_iTkBlockMax) {
-                if (Players[client].tk_block_punishment < g_iTkBlockMax) {
-                  // Cancenlando voto si existe alguno
-                  CancelVote();
-                  // Verificando si el cliente contiene flags
-                  if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-                    // Verificando si el ultimo voto fue reciente
-                    if (Players[client].last_vote_bantime + 7 >= GetTime()) {
-                      // Creando switch para opcion random
-                      switch(GetRandomInt(0, 2)) {
-                        case 0: {
-                          // Baneando al jugado
-                          ServerCommand("sm_ban \"#%d\" \"%i\" \"%s\"", GetClientUserId(client), GetRandomInt(30, 60), "Team killer");
-                          // Imprimiendo que el jugador se ha vuelto loco
-                          CPrintToChatAll("{blue}%N {default}went crazy and {blue}banned{default} by the {blue}server! \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
-                        }
-                        default: {
-                          // Expulsando al jugador
-                          KickClient(client, "Don't abuse about your power !! ;)");
-                          // Imprimiendo que el jugador se ha vuelto loco
-                          CPrintToChatAll("{blue}%N {default}went crazy and {blue}kicked{default} by the {blue}server! \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
-                        }
-                      }
-                    } else {
-                      // Asesinando al jugador
-                      ServerCommand("sm_slay \"#%d\"", GetClientUserId(client));
-                      // Imprimiendo mensaje
-                      CPrintToChatAll("{blue}%N \x05went crazy \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
-                    }
-                  } else {
-                    // Igualando el castigo con el block damage
-                    Players[client].tk_block_punishment = Players[client].tk_block_damage;
-                    bool isBanned = false;
-                    // Verificando si cliente tiene puntos menores a -300
-                    if (Players[client].points < -300) {
-                      // Verificando si el ultimo tiempo de voto fue reciente para banear dependiendo sus puntos * 2
-                      if (Players[client].last_vote_bantime + 7 >= GetTime()) {
-                        // isBanned = BanClient(client, (-2 * Players[client].points), AuthId_Steam2, ON_BAN_REASON, ON_BAN_MESSAGE);
-                      } else {
-                        // isBanned = BanClient(client, (-1 * Players[client].points), AuthId_Steam2, ON_BAN_REASON, ON_BAN_MESSAGE);
-                      }
-                    } else {
-                      // En caso de que sus puntos sean mayores a -300 entonces se banea 5 horas
-                      // isBanned = BanClient(client, ON_BAN_TIME, AuthId_Steam2, ON_BAN_REASON, ON_BAN_MESSAGE);
-                    }
-                    if(isBanned) {
-                      // Imprimiendo que l jugado va hacer baneado
-                      CPrintToChatAll("{blue}%N \x04(\x05%s\x4)\x05 has been banned \x04[\x05%i TK\x04]", client, Players[client].authid, Players[client].tk_block_damage);				
-                    }
-                    #if DEBUG 
-                    else {
-                      CPrintToChatAll("Failed to banned");
-                    }
-                    #endif
-                  }
-                
-                } else if ((Players[client].tk_block_damage - Players[client].tk_block_punishment) > g_iTkBlockMin) {			
-                  // Tk de castigo 
-                  Players[client].tk_block_punishment = Players[client].tk_block_damage;
-                  // Obteniendo el tiempo
-                  Players[client].last_vote_bantime = GetTime();
-                  // Verificando si tiene acceso de admin mod vip
-                  if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-                    // Iniciando auto voteslay
-                    ServerCommand("sm_voteslay \"#%d\"", GetClientUserId(client));
-                    // Imprimiendo mensaje de autovote slay
-                    CPrintToChatAll("{blue}Autovoteslay {default}against {blue}%N {default}because {green}team killing \x04[\x05{green}%i TK\x04]", client, Players[client].tk_block_damage);
-                  } else {
-                    // Iniciando voto de vote ban
-                    ServerCommand("sm_voteban #%d \"Team killer\"", GetClientUserId(client));
-                    // Imprimiendo mensaje 
-                    CPrintToChatAll("{blue}Autovoteban {default}against {blue}%N \x04[\x05%iTK\x04] \x04({blue}Rank: \x05{green}%d {blue}Points: \x05%d\x04)", client, Players[client].tk_block_damage, Players[client].rank, Players[client].points);
-                  }
-                  return;
-                }
-              }
-            }
-          } else {
-            KickClient(client, "Fucking noob");
-          }
-        }
       }
     }
   }
@@ -1178,24 +928,6 @@ void ShowRank(int client, int target)
     Format(contime, sizeof(contime), "%d d %d h %d min %d sec", client, cDays, cHours, cMinutes, seconds);
   }
 
-  int BonusTK = 0;
-
-  if (Players[target].rank > 1000 || Players[target].rank == 0)
-  {
-    BonusTK = -45;
-  }
-  else if (Players[target].rank > 100 && Players[target].rank < 1001)
-  {
-    BonusTK = 0;
-  }
-  else if (Players[target].rank > 0 && Players[target].rank < 101)
-  {
-    BonusTK = 30;
-  }
-
-  int g_iTkBlockMinReal = g_iTkBlockMin + BonusTK;
-  int g_iTkBlockMaxReal = g_iTkBlockMax + BonusTK;
-
   Format(Value, sizeof(Value), "Ranking of %N", client, client);
   rank.DrawText(Value);
 
@@ -1217,21 +949,8 @@ void ShowRank(int client, int target)
   Format(Value, sizeof(Value), "Playtime: %s", playtime);
   rank.DrawText(Value);
   
-  Format(Value, sizeof(Value), "Assistance Factor: %.2f", Players[target].factor);
-  rank.DrawText(Value);
-
   Format(Value, sizeof(Value), "Bonus Points: %d", Players[target].bonus_points);
   rank.DrawText(Value);
-
-  Format(Value, sizeof(Value), "TK: %d", Players[target].tk_block_damage);
-  rank.DrawText(Value);
-
-  Format(Value, sizeof(Value), "Voteban TK: %i", g_iTkBlockMinReal);
-  rank.DrawText(Value);
-
-  Format(Value, sizeof(Value), "Ban TK: %i", g_iTkBlockMaxReal);
-  rank.DrawText(Value);
-
 
   Format(Value, sizeof(Value), "For full stats visit:\n%s", WEBSITE_STATS);
   rank.DrawText(Value);
@@ -1588,43 +1307,6 @@ int calculatePoints(int points) {
   return points;
 }
 
-void GrantPlayerColor(int client) {
-  if (IsValidClient(client)) {
-    if (IsClientConnected(client)) {
-      if(IsClientInGame(client)) {
-        if(GetClientTeam(client) == TEAM_SURVIVORS) {
-          if(IsPlayerAlive(client)) {
-            if(CheckCommandAccess(client, "sm_fk", ADMFLAG_ROOT, true)) {
-              SetEntityRenderColor(client, 0, 0, 0, 255); // Negro para administrador
-            } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-              SetEntityRenderColor(client, 0, 176, 246, 255); // Cyan
-            } else if (Players[client].points > 1280000) {
-              SetEntityRenderColor(client, 102, 51, 0, 255); // Cafe
-            } else if (Players[client].points > 640000) {
-              SetEntityRenderColor(client, 255, 97, 3, 255); // Orange color
-            } else if (Players[client].points > 320000) {
-              SetEntityRenderColor(client, 255, 0, 0, 255); // Red color
-            } else if (Players[client].points > 160000) {
-              SetEntityRenderColor(client, 255, 104, 240, 255); // pink color FF68F0
-            } else if (Players[client].points > 80000) {
-              SetEntityRenderColor(client, 102, 25, 140, 255); // purple 66198C
-            } else if (Players[client].points > 40000) {
-              SetEntityRenderColor(client, 0, 139, 0, 255); // green color
-            } else if (Players[client].points > 20000) {
-              SetEntityRenderColor(client, 0, 0, 255, 255); // Blue colour
-            } else if (Players[client].points > 10000) {
-              SetEntityRenderColor(client, 255, 255, 0, 255); // yellow
-            } else if (Players[client].points > 5000) {
-              SetEntityRenderColor(client, 173, 255, 47, 255); // light green color
-            }
-            ServerCommand("sm_rcon setaura #%d", GetClientUserId(client));
-          }
-        }
-      }
-    }
-  }
-}
-
 public Action Command_Setinfo(int client, const char[] _command, int _argc)
 {
   char _arg[32];
@@ -1635,34 +1317,28 @@ public Action Command_Setinfo(int client, const char[] _command, int _argc)
   return Plugin_Continue;
 } 
 
-public Action eventPlayerSpawn(Event event, const char[] name, bool dontBroadcast) {
+public Action OnPlayerSpawn(Event event, const char[] name, bool dontBroadcast) {
   ADPlayerSpawn(event);
   int client = GetClientOfUserId(event.GetInt("userid"));
   CreateTimer(6.0, TimedGrantPlayerColor, client);
 }
 
-public Action TimedGrantPlayerColor(Handle timer, any client) {
-  GrantPlayerColor(client);
+public Action TimedGrantPlayerColor(Handle timer, int client) {
+  Players[client].renderColor();
 }
 
 bool IsRealClient(int client) {
-  return IsValidClient(client) && IsClientInGame(client) && !IsFakeClient(client);
+  return IsValidClient(client) && IsClientInGame(client) && !IsFakeClient(client) && client > 0;
 }
 
 bool IsValidClient(int client) {
   return IsValidEntity(client) && client && client <= MaxClients;
 }
 
-public Action eventPlayerTeamPost(Event event, const char[] name, bool dontBroadcast) {
-  if (!event.GetBool("disconnect")) {
-    int client = GetClientOfUserId(event.GetInt("userid"));
-    if(client) {
-      if(IsClientInGame(client)) {
-        if(!IsFakeClient(client)) {
-          CreateTimer(0.1, Timer_ADPlayerTeam);
-        }	
-      }
-    }
+public Action OnPlayerTeamPost(Event event, const char[] name, bool dontBroadcast) {
+  int client = GetClientOfUserId(event.GetInt("userid"));
+  if (!event.GetBool("disconnect") && IsRealClient(client)) {
+    CreateTimer(0.1, Timer_ADPlayerTeam);
   }
   return Plugin_Continue;
 }
@@ -1860,13 +1536,13 @@ public Action cmdPointsOff(int client, int args) {
   }
 }
 
-public Action eventMapTransition(Event event, const char[] name, bool dontBroadcast) {
+public Action OnMapTransition(Event event, const char[] name, bool dontBroadcast) {
   ADOnMapStart();
   StopMapTiming();
   PrintMapPoints();
 }
 
-public Action eventFinalWin(Event event, const char[] name, bool dontBroadcast){
+public Action OnFinalWin(Event event, const char[] name, bool dontBroadcast){
   // StopMapTiming();
   // PrintMapPoints();
   UpdatePlayersStats();
@@ -1916,25 +1592,13 @@ public Action cmdGivePoints(int client, int args) {
       for (int i = 0; i < target_count; i++) {
         int player = target_list[i];
         Players[player].points_gift += Score;
-        AddScore(player, Score);
+        Players[player].addPoints(Score);
       }
       return Plugin_Handled;
     }
   } else {
     ReplyToCommand(client, "sm_givepoints <#userid|name> [Score]");
     return Plugin_Handled;
-  }
-}
-
-public void AddScore(int client, int Score) {
-  Players[client].new_points += Score;
-  if (Score > 0) {
-    if(g_pointsEnabled) {
-      PrintToChat(client, "\x05+%i", Score);
-    }
-  } else if (Score < 0) {
-    PrintToChat(client, "\x04%i", Score);
-    Players[client].points_lost += (-1 * Score);
   }
 }
 
@@ -1949,14 +1613,8 @@ public Action cmdRank(int client, int args) {
       ShowRankTarget(client, target);
     }
     else {
-      // if(Players[client].rank == 0) {
-        // if(!CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-          // PlayerFetch(client);
-        // }
-      // }
       ShowRank(client, client);
     }
-      
     return Plugin_Handled;
   }
   else if (args == 1)
@@ -2000,7 +1658,7 @@ public Action OnAnyVote(int client, int args) {
   return Plugin_Handled;
 }
 
-public Action eventStartAreaPost(Event event, const char[] name, bool dontBroadcast) {
+public Action OnStartAreaPost(Event event, const char[] name, bool dontBroadcast) {
   if (bIsFirstMapOfCampaign()) {
     StartMapTiming();
     return Plugin_Continue;
@@ -2045,18 +1703,30 @@ public void StopMapTiming(){
 * Evento al correr cualquier cmd
 */
 public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon) {
-  if (!IsFakeClient(client)) {
-    if(Players[client].points < POINTS_TO_LAUNCH_GRENADE) {
-      int activeWeapon = GetEntPropEnt(client, Prop_Data, "m_hActiveWeapon");
-      if (activeWeapon > -1) {
-        char weponName[32];
-        GetEdictClassname(activeWeapon, weponName, sizeof(weponName));
-        if ( (buttons & IN_ATTACK) && ( StrContains(weponName, "vomitjar") > -1 || StrContains(weponName, "molotov") > -1 ) ) {
-          buttons &= ~IN_ATTACK;
-          PrintHintText(client, "It is forbidden to use grenades for players\nwith less than %d points!", POINTS_TO_LAUNCH_GRENADE);
-        }
-      }
-    }
+  if(!IsRealClient(client)) return Plugin_Continue;
+  if(Players[client].points >= POINTS_TO_LAUNCH_GRENADE) return Plugin_Continue;
+
+  int active_weapon = GetEntPropEnt(client, Prop_Data, "m_hActiveWeapon");
+  if (active_weapon == -1) return Plugin_Continue;
+
+  char weapon_name[32];
+  GetEdictClassname(active_weapon, weapon_name, sizeof(weapon_name));
+
+  if ( (buttons & IN_ATTACK) && (
+      StrContains(weapon_name, "vomitjar") > -1 ||
+      StrContains(weapon_name, "molotov") > -1 ||
+      StrContains(weapon_name, "weapon_grenade_launcher") > -1 ||
+      StrContains(weapon_name, "weapon_chainsaw") > -1
+   ) ) {
+    buttons &= ~IN_ATTACK;
+    ReplaceString(weapon_name, 32, "weapon_", "");
+    ReplaceString(weapon_name, 32, "_", " ");
+    PrintHintText(
+      client, 
+      "Player with less than %d points\nare not allowed to use %s!",
+      POINTS_TO_LAUNCH_GRENADE,
+      weapon_name
+    );
   }
   return Plugin_Continue;
 }
@@ -2064,7 +1734,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 /**
 *	Handle when a user send a message then concatenate "tag + user : + message"
 */
-public Action onMessage(int client, int args) {
+public Action OnMessage(int client, int args) {
   // Verificando si es un trigger ! o /
   if(IsChatTrigger()) {
     Players[client].counter_commands++;
@@ -2072,48 +1742,47 @@ public Action onMessage(int client, int args) {
     return Plugin_Handled;
   }
   // Verificando que el jugador sea valido
-  if(IsValidClient(client)) {
-    if(client > 0) {
-      Players[client].counter_messages++;
-      // Verificando si el jugador es un vip/mod/admin
-      if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true) ||
-        CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true) ||
-        Players[client].rank > 0 && Players[client].rank < 40) {
-        // Inicializando variable
-        char message[256];
-        GetCmdArgString(message, sizeof(message));
-        StripQuotes(message);
-        // Verificando si tiene permisos como root
-        if(CheckCommandAccess(client, "sm_fk", ADMFLAG_ROOT, true)) {
-          // Imprimiendo mensaje 
-          CPrintToChatAll("\x03[\x04A\x03] {blue}%N: {default}%s", client, message);
-        // Verificando si tiene permisos como moderador
-        } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-          // Imprimiendo mensaje como mod
-          CPrintToChatAll("\03[\x04M\03] {blue}%N: {default}%s", client, message);
-        // Verificando si tiene permisos como vip
-        } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
-          // Verificando si pertenece al top 40
-          if(Players[client].rank > 0 && Players[client].rank <= 99) {
-            // Imprimiendo mensaje
-            CPrintToChatAll("\x03[\x04V\x03]\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message);
-          } else {
-            // Imprimiendo mensaje
-            CPrintToChatAll("\x03[\x04V\x03]\x05 {blue}%N: {default}%s", client, message);
-          }
-        // Verificando si pertene al top 40
-        } else if(Players[client].rank > 0 && Players[client].rank <= 99) {
-          // Imprimiendo mensaje
-          CPrintToChatAll("\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message);
-        }
-        return Plugin_Handled;
-      }
-    } else {
+  if(!IsValidClient(client)) return Plugin_Continue;
+  if(client > 0) {
+    Players[client].counter_messages++;
+    // Verificando si el jugador es un vip/mod/admin
+    if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true) ||
+      CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true) ||
+      Players[client].rank > 0 && Players[client].rank < 40) {
+      // Inicializando variable
       char message[256];
       GetCmdArgString(message, sizeof(message));
-      CPrintToChatAll("\x04[\x05CONSOLE\x04] {default}%s", message);
+      StripQuotes(message);
+      // Verificando si tiene permisos como root
+      if(CheckCommandAccess(client, "sm_fk", ADMFLAG_ROOT, true)) {
+        // Imprimiendo mensaje 
+        CPrintToChatAll("\x03[\x04A\x03] {blue}%N: {default}%s", client, message);
+      // Verificando si tiene permisos como moderador
+      } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
+        // Imprimiendo mensaje como mod
+        CPrintToChatAll("\03[\x04M\03] {blue}%N: {default}%s", client, message);
+      // Verificando si tiene permisos como vip
+      } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
+        // Verificando si pertenece al top 40
+        if(Players[client].rank > 0 && Players[client].rank <= 99) {
+          // Imprimiendo mensaje
+          CPrintToChatAll("\x03[\x04V\x03]\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message);
+        } else {
+          // Imprimiendo mensaje
+          CPrintToChatAll("\x03[\x04V\x03]\x05 {blue}%N: {default}%s", client, message);
+        }
+      // Verificando si pertene al top 40
+      } else if(Players[client].rank > 0 && Players[client].rank <= 99) {
+        // Imprimiendo mensaje
+        CPrintToChatAll("\x04[\x05RANK-%d\x04] {blue}%N: {default}%s", Players[client].rank, client, message);
+      }
       return Plugin_Handled;
     }
+  } else {
+    char message[256];
+    GetCmdArgString(message, sizeof(message));
+    CPrintToChatAll("\x04[\x05GOD\x04] {default}%s", message);
+    return Plugin_Handled;
   }
   return Plugin_Continue;
 }
@@ -2140,7 +1809,7 @@ void printTotalDamage(int victim, int[][] damageList, char[] Message, int total_
             attackers[attacker_counter][0] = i;
             attackers[attacker_counter][1] = damage;
             attackers[attacker_counter][2] = iGetPercent(damage, total_health);
-            AddScore(i, attackers[attacker_counter][2]);
+            Players[i].addPoints(attackers[attacker_counter][2]);
             attacker_counter++;
           }
         }

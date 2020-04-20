@@ -1,3 +1,42 @@
+enum struct PlayerDamage {
+  int id;
+  int counter;
+  bool voted;
+
+  void add(int counter = 1) {
+    if(counter > 0) {
+      this.counter += counter;
+    }
+  }
+
+  void subtract(int counter = 1) {
+    if(this.counter < 0) {
+      this.counter -= counter;
+    }
+  }
+
+  bool reset() {
+    this.counter = 0;
+    this.voted = false;
+  }
+
+  bool requirePunishment(int max_damage) {
+    if(this.voted && this.counter >= max_damage) {
+      this.voted = false;
+      return true;
+    }
+    return false;
+  }
+
+  bool requireVoted(int min_damage, int max_damage) {
+    if(this.counter > min_damage && this.counter < max_damage && !this.voted) {
+      this.voted = true;
+      return true;
+    }
+    return false;
+  }
+}
+
 enum struct PlayersInfo {
   int id;
   char name[MAX_NAME_LENGTH];
@@ -74,10 +113,16 @@ enum struct PlayersInfo {
   int tk_block_punishment;
   int vomit_tk_block_damage;
   int vomit_tk_block_punishment;
+  // numero de kicks en la ronda...
   int vote_kick;
+
+  PlayerDamage team_killer;
+  PlayerDamage team_vomit;
 
   void store(int client) {
     this.id = client;
+    this.team_killer.id = client;
+    this.team_vomit.id = client;
     GetClientName(client, this.name, MAX_NAME_LENGTH);
     GetClientAuthId(client, AuthId_Steam2, this.authid, 32);
     GetClientIP(client, this.ipv4, 16);
@@ -175,6 +220,69 @@ enum struct PlayersInfo {
     }
     RunAdminCacheChecks(this.id);
   }
+
+  void announce() {
+    if(CheckCommandAccess(this.id, "sm_fk", ADMFLAG_KICK, true)) {
+      CPrintToChatAll("\x05+\x04 Admin {blue}%N \x05has joined", this.id);
+    } else if(CheckCommandAccess(this.id, "sm_fk", ADMFLAG_GENERIC, true)) {
+      CPrintToChatAll("\x05+\x04 Moderator {blue}%N \x05has joined", this.id);
+    } else if(CheckCommandAccess(this.id, "sm_fk", ADMFLAG_RESERVATION, true)) {
+      CPrintToChatAll("\x05+\x04 VIP {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", this.id, this.rank,this.points);
+    } else {
+      CPrintToChatAll("\x05+ Player {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", this.id, this.rank,this.points);
+    }
+    EmitSoundToAll(SOUND_JOIN);
+  }
+
+  void renderColor() {
+    if(!IsRealClient(this.id) || GetClientTeam(this.id) != TEAM_SURVIVORS || !IsPlayerAlive(this.id)) return;
+    if(CheckCommandAccess(this.id, "sm_fk", ADMFLAG_ROOT, true)) {
+      SetEntityRenderColor(this.id, 0, 0, 0, 255); // Negro para administrador
+    } else if(CheckCommandAccess(this.id, "sm_fk", ADMFLAG_GENERIC, true)) {
+      SetEntityRenderColor(this.id, 0, 176, 246, 255); // Cyan
+    } else if (this.points > 1280000) {
+      SetEntityRenderColor(this.id, 102, 51, 0, 255); // Cafe
+    } else if (this.points > 640000) {
+      SetEntityRenderColor(this.id, 255, 97, 3, 255); // Orange color
+    } else if (this.points > 320000) {
+      SetEntityRenderColor(this.id, 255, 0, 0, 255); // Red color
+    } else if (this.points > 160000) {
+      SetEntityRenderColor(this.id, 255, 104, 240, 255); // pink color FF68F0
+    } else if (this.points > 80000) {
+      SetEntityRenderColor(this.id, 102, 25, 140, 255); // purple 66198C
+    } else if (this.points > 40000) {
+      SetEntityRenderColor(this.id, 0, 139, 0, 255); // green color
+    } else if (this.points > 20000) {
+      SetEntityRenderColor(this.id, 0, 0, 255, 255); // Blue colour
+    } else if (this.points > 10000) {
+      SetEntityRenderColor(this.id, 255, 255, 0, 255); // yellow
+    } else if (this.points > 5000) {
+      SetEntityRenderColor(this.id, 173, 255, 47, 255); // light green color
+    }
+  }
+
+  void addPoints(int points) {
+    this.new_points += points;
+    if (points > 0 && g_pointsEnabled) {
+      PrintToChat(this.id, "\x05+%i", points);
+    } else if (points < 0) {
+      PrintToChat(this.id, "\x04%i", points);
+      this.points_lost += (-1 * points);
+    }
+  }
+
+  void addBonusPoints(int points = 1) {
+    if(points > 0) {
+      this.bonus_points += points;
+    }
+  }
+
+  void subtractBonusPoints(int points = 1) {
+    this.bonus_points -= points;
+    if(this.bonus_points < 0) {
+      this.bonus_points = 0;
+    }
+  }
 }
 
 PlayersInfo Players[MAXPLAYERS + 1];
@@ -211,7 +319,6 @@ public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, 
         KickClient(client, "%s\n\nYou have been banned because: %s,\n\n Please visit: %s", hostname, reason, BANS_URL);
         return;
       }
-      Players[client].id = client;
       Players[client].kill_bosses = results.FetchInt(2);
       Players[client].factor = results.FetchFloat(3);
       Players[client].points = results.FetchInt(4);
@@ -222,24 +329,11 @@ public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, 
       results.FetchString(8, flags, 10);
       int immunity = results.FetchInt(9);
       Players[client].assignFlags(flags, immunity);
-      PlayerAnnounceConnection(client);
-      GrantPlayerColor(client);
+      Players[client].announce();
+      Players[client].renderColor();
     }
   }
   while (results.FetchMoreResults()) {}
-}
-
-stock void PlayerAnnounceConnection(int client) {
-  if(CheckCommandAccess(client, "sm_fk", ADMFLAG_KICK, true)) {
-    CPrintToChatAll("\x05+\x04 Admin {blue}%N \x05has joined", client);
-  } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
-    CPrintToChatAll("\x05+\x04 Moderator {blue}%N \x05has joined", client);
-  } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
-    CPrintToChatAll("\x05+\x04 VIP {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", client, Players[client].rank,Players[client].points);
-  } else {
-    CPrintToChatAll("\x05+ Player {blue}%N \x01(\x05RANK: \x04%d, \x05POINTS: \x04%d\x01)", client, Players[client].rank,Players[client].points);
-  }
-  EmitSoundToAll(SOUND_JOIN);
 }
 
 stock void PlayerReset(int client) {
@@ -248,17 +342,10 @@ stock void PlayerReset(int client) {
 }
 
 stock void PlayerResetAll() {
-    PlayersInfo p;
-    for (int i = 1; i <= MaxClients; ++i) {
-        Players[i] = p;
-    }
-}
-
-public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max) {
-  CreateNative("TYSTATS_GetPoints", Native_TYSTATS_GetPoints);
-  CreateNative("TYSTATS_GetRank", Native_TYSTATS_GetRank);
-  CreateNative("TYSTATS_GetPlayTime", Native_TYSTATS_GetPlayTime);
-  return APLRes_Success;
+  PlayersInfo p;
+  for (int i = 1; i <= MaxClients; ++i) {
+    Players[i] = p;
+  }
 }
 
 public int Native_TYSTATS_GetPoints(Handle plugin, int numParams) {

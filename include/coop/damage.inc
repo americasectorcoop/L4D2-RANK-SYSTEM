@@ -184,7 +184,7 @@ public void ConVarsInit()
   DamageHeadshot[ZC_TANK] = MeleeHeadshotDmg[ZC_TANK].FloatValue;
 }
 
-public void OnAllPluginsLoaded()
+public void DamageOnAllPluginsLoaded()
 {
   for (int i = 1; i <= MaxClients; i++)
   {

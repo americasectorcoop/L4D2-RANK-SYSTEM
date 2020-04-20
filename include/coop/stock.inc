@@ -87,3 +87,11 @@ void vGetTimeLabel(float TheSeconds, char[] TimeLabel, int maxsize) {
     Format(TimeLabel, maxsize, "%t", "%.1f seconds", Seconds);
   }
 }
+
+bool bPlayerInDistress(int client) {
+  return IsIncapacitated(client) || bIsPlayerGrapEdge(client);
+}
+
+bool bRealClients(int player1, int player2) {
+  return IsRealClient(player1) && IsRealClient(player2) && player1 != player2;
+}
