@@ -216,6 +216,7 @@ public Action OnWitchSpawn_Event(Event event, const char[] name, bool dontBroadc
   }
 
   SDKHook(witch, SDKHook_OnTakeDamage, OnWitchTakeDamage);
+  Witchs[witch].health = FindConVar("z_witch_health").IntValue;
 }
 
 public Action OnWitchKilled_Event(Event event, const char[] name, bool dontBroadcast)
@@ -226,6 +227,11 @@ public Action OnWitchKilled_Event(Event event, const char[] name, bool dontBroad
   if (witch < 1 || !IsValidEntity(witch)) return;
 
   SDKUnhook(witch, SDKHook_OnTakeDamage, OnWitchTakeDamage);
+
+  Witchs[witch].renderPlayersDamage();
+
+  WitchsInfo w;
+  Witchs[witch] = w;
 }
 
 public Action OnWitchTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype)
@@ -235,8 +241,13 @@ public Action OnWitchTakeDamage(int victim, int &attacker, int &inflictor, float
   char clsname[64];
   GetEdictClassname(inflictor, clsname, 64);
   
-  if (!StrEqual(clsname, "weapon_melee")) return Plugin_Continue;
+  if (!StrEqual(clsname, "weapon_melee")) {
+    Witchs[victim].damage[attacker] += RoundFloat(damage);
+    return Plugin_Continue;
+  }
+ 
   damage = DamageBody[ZC_WITCH];
+  Witchs[victim].damage[attacker] += RoundFloat(damage);
   
   return Plugin_Changed;
 }

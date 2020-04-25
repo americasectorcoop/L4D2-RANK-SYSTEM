@@ -2,7 +2,7 @@
 * Metodo para ordernar listados
 * @return integer
 */
-stock int iSortFunc(int[] x, int[] y, const int[][] array, Handle hndl) {
+stock int SortPlayerDamage(int[] x, int[] y, const int[][] array, Handle hndl) {
   if (x[1] > y[1]) {
     return -1;
   } else if (x[1] == y[1]) {
@@ -17,7 +17,7 @@ stock int iSortFunc(int[] x, int[] y, const int[][] array, Handle hndl) {
 * @param int total_units
 * return integer
 */
-stock int iGetPercent(int units, int total_units) {
+stock int iGetPercentage(int units, int total_units) {
   return RoundToZero(units * 100.0 / total_units);
 }
 

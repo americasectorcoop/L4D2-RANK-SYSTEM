@@ -51,18 +51,12 @@
 #define KILL_COUNT_INFECTED 15
 // Numero de puntos a necesitar antes de lanzar una granada
 #define POINTS_TO_LAUNCH_GRENADE 5000
-// Numero de fraggers por imprimir
-#define MAX_FRAGGERS 3
 // Numero de puntos negativos para patear a un jugador 
 #define POINTS_NEGATIVE_FOR_KICK_PLAYERS -2000
 
 #define SOUND_MAPTIME_START "level/countdown.wav"
 #define SOUND_MAPTIME_FINISH "level/bell_normal.wav"
 #define SOUND_JOIN "ui/beepclear.wav"
-
-int g_iTankDamage[MAXPLAYERS + 1][MAXPLAYERS + 1];
-int g_iTankHealth[MAXPLAYERS + 1];
-char g_sTankName[MAXPLAYERS + 1][MAX_LINE_WIDTH];
 
 bool g_bPlayerIgnore[MAXPLAYERS+1][MAXPLAYERS+1];
 
@@ -102,11 +96,11 @@ ConVar l4d2_difficulty_multiplier;
 
 #include <coop/stock>
 #include <coop/PlayersInfo>
-#include <coop/autodifficulty>
-#include <coop/damage>
 #include <coop/MapPlayerTop>
 #include <coop/PlayerPunishments>
 #include <coop/PlayerFrags>
+#include <coop/autodifficulty>
+#include <coop/damage>
 
 public Plugin myinfo = {
   name = "Rank System",
@@ -230,7 +224,7 @@ void OnDatabaseConnected() {
 }
 
 public Action cmdFrags(int client, int args) {
-  printTotalFrags(client);
+  RenderPlayerFrags(client);
 }
 
 /**
@@ -287,9 +281,7 @@ public void OnClientDisconnect(int client) {
   UpdatePlayer(client);
   DMOnClientDisconnect(client);
   PlayerReset(client);
-  g_iTankDamage[client][0] = 0;
   for(int i = 1;i <= MaxClients; i++) {
-    g_iTankDamage[client][i] = 0;
     g_bPlayerIgnore[client][i] = false;
   }
 }
@@ -430,14 +422,17 @@ void GetTotalPlayers() {
 
 public Action OnTankSpawn(Event event, const char[] name, bool dontBroadcast) {
   int tank = GetClientOfUserId(event.GetInt("userid"));
-  g_iTankHealth[tank] = GetClientHealth(tank);
-  GetClientName(tank, g_sTankName[tank], MAX_LINE_WIDTH);
+  Tanks[tank].health = GetClientHealth(tank);
+  return Plugin_Continue;
 }
 
 public Action OnTankKilled(Event event, const char[] name, bool dontBroadcast) {
   int tank = GetClientOfUserId(event.GetInt("userid"));
-  GetClientName(tank, g_sTankName[tank], MAX_LINE_WIDTH);
-  printTotalDamageTank(tank);
+  GetClientName(tank, Tanks[tank].name, MAX_LINE_WIDTH);
+  Tanks[tank].renderPlayersDamage();
+  TanksInfo t;
+  Tanks[tank] = t;
+  return Plugin_Continue;
 }
 
 public Action OnMeleeKill(Event event, const char[] name, bool dontBroadcast) {
@@ -699,7 +694,7 @@ public Action OnPlayerHurt(Event event, const char[] name, bool dontBroadcast) {
         if(damage > health) {
           damage = health;
         }
-        g_iTankDamage[target][attacker] += damage;
+        Tanks[target].damage[attacker] += damage;
       }
     }
   }
