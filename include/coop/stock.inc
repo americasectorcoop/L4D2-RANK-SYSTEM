@@ -95,3 +95,7 @@ bool bPlayerInDistress(int client) {
 bool bRealClients(int player1, int player2) {
   return IsRealClient(player1) && IsRealClient(player2) && player1 != player2;
 }
+
+bool IsFromStaff(int client) {
+  return CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true);
+}

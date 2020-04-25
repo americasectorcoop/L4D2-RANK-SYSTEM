@@ -106,6 +106,7 @@ ConVar l4d2_difficulty_multiplier;
 #include <coop/damage>
 #include <coop/MapPlayerTop>
 #include <coop/PlayerPunishments>
+#include <coop/PlayerFrags>
 
 public Plugin myinfo = {
   name = "Rank System",
@@ -598,7 +599,7 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
   // al ser asesinado un jugador por un enemigo xD
   } else if(IsRealClient(victim)) {
     // Guardando el grupo de la victima
-    if(GetClientTeam(attacker) == TEAM_INFECTED) {
+    if(IsValidClient(attacker) && GetClientTeam(attacker) == TEAM_INFECTED) {
       int special_infected = GetEntProp(attacker, Prop_Send, "m_zombieClass");
       if(special_infected == ZC_SMOKER) {
         Players[victim].killed_by_smooker += 1;
@@ -685,10 +686,11 @@ public Action OnPlayerHurt(Event event, const char[] name, bool dontBroadcast) {
   int team_target = GetClientTeam(target);
   // Verificando si el objetico es del equivo de sobrevivientes
   if(team_target == TEAM_SURVIVORS && !IsFakeClient(target)) {
-    CPrintToChat(target, "{blue}%N \x05attacked {blue}you \x04[\x05%i TK\x04]", attacker, damage);
-    CPrintToChat(attacker, "{blue}You \x05attacked {blue}%N \x04[\x05%d TK\x04]", target, damage);
-    Players[attacker].addPoints(damage);
+    int points = (damage > 25 ? 25 : (damage < 1 ? 1 : damage)) * -1;
+    Players[attacker].addPoints(points);
     PunishTeamKiller(attacker, damage);
+    CPrintToChat(target, "{blue}%N \x05attacked {blue}you \x04[\x05%i TK\x04]", attacker, Players[attacker].team_killer.counter);
+    CPrintToChat(attacker, "{blue}You \x05attacked {blue}%N \x04[\x05%d TK\x04]", target, Players[attacker].team_killer.counter);
   } else if(team_target == TEAM_INFECTED) {
     int special_infected = GetEntProp(target, Prop_Send, "m_zombieClass");
     if(special_infected == ZC_TANK) {
@@ -766,18 +768,17 @@ public Action OnPlayerNowIt(Event event, const char[] name, bool dontBroadcast) 
         CPrintToChatAll("{blue}%N {default}vomit {blue}Tank", attacker);
         score = 8;
       }
-      Players[attacker].addPoints(score);
     } else if(team_victim == TEAM_SURVIVORS && !IsFakeClient(victim)) {
       score = -5;
       if (IsTankAlive()) {
         if(bPlayerInDistress(victim)) score *= 4;
         else score *= 3;
       } else if(bPlayerInDistress(victim)) score *= 2;
-      Players[attacker].addPoints(score);
-      PunishVomiter(attacker, (score * -1));
       CPrintToChat(victim, "{blue}%N {default}vomited you! \x04[\x05%i vomitTK\x04]", attacker, Players[attacker].team_vomit.counter);
       CPrintToChat(attacker, "{blue}You {default}vomited {blue}%N ! \x04[\x05%i vomitTK\x04]", victim, Players[attacker].team_vomit.counter);
+      PunishVomiter(attacker, (score * -1));
     }
+    Players[attacker].addPoints(score);
   }
   return Plugin_Continue;
 }
@@ -798,42 +799,47 @@ public Action OnPlayerRescued(Event event, const char[] name, bool dontBroadcast
  * @param bool  dontBroadcast
  */
 public Action OnAward(Event event, const char[] name, bool dontBroadcast) {
-  // Obteniendo el id del cliente
+// Obteniendo el id del cliente
   int client = GetClientOfUserId(event.GetInt("userid"));
-  int adward_id = event.GetInt("award");
-  int subjectentid = event.GetInt("subjectentid");
   if(!IsRealClient(client)) return Plugin_Continue;
+  int adward_id = event.GetInt("award");
+  int target = event.GetInt("subjectentid");
   // Creando switch para id del logro
   switch(adward_id) {
     // Protect friendly
     case 67: {
-      if(IsRealClient(GetClientOfUserId(GetClientUserId(subjectentid)))) {
+      // Verificando que el objetivo sea valido
+      if(target) {
         Players[client].friends_protected += 1;
       }
     }
     // Pills given
     case 68: {
-      int target = GetClientOfUserId(GetClientUserId(subjectentid));
-      if (IsRealClient(target)) {
-        givePills(client, target);
+      // Verificando que el objetivo sea valido
+      if (target) {
+        // Dando pildoras 
+        givePills(client, GetClientOfUserId(GetClientUserId(target)));
       }
     }
     // Adrenaline given
     case 69: {
-      int target = GetClientOfUserId(GetClientUserId(subjectentid));
-      if (IsRealClient(target)) {
-        giveAdrenaline(client, target);
+      // Verificando que el objetivo sea valido
+      if (target) {
+        // Dando adrenalina
+        giveAdrenaline(client, GetClientOfUserId(GetClientUserId(target)));
       }
     }
     // Kill Tank with no deaths
     case 81: {
+      // Sumando al cliente un asesinato de tank sin morir
       Players[client].kill_tanks_without_deaths += 1;
     }
     // Incap friendly
     case 85: {
-      int target = GetClientOfUserId(GetClientUserId(subjectentid));
       // Verificando que el objetivo sea valido
-      if (IsRealClient(target)) {
+      if (target) {
+        // Obteniendo el id del objetivo
+        target = GetClientOfUserId(GetClientUserId(target));
         // Verificando que cliente y el objetivo sean del equipo de sobrevivientes
         if ( GetClientTeam(client) == TEAM_SURVIVORS && GetClientTeam(target) == TEAM_SURVIVORS) {
           // Sumando al cliente una incapacitacion
@@ -937,7 +943,10 @@ void ShowRank(int client, int target)
   Format(Value, sizeof(Value), "Rank: %d of %d", Players[target].rank, g_iRegisteredPlayers);
   rank.DrawText(Value);
 
-  Format(Value, sizeof(Value), "Points: %d +%d", Players[target].points, calculatePoints(Players[target].new_points));
+  int current_points = calculatePoints(Players[target].new_points);
+  char prefix[1];
+  prefix = current_points > 0 ? "+" : "";
+  Format(Value, sizeof(Value), "Points: %d %s%d", Players[target].points, prefix, calculatePoints(Players[target].new_points));
   rank.DrawText(Value);
 
   Format(Value, sizeof(Value), "Killed Bosses: %d", Players[target].kill_bosses);
@@ -1135,7 +1144,7 @@ public Action cmdNextRank(int client, int args) {
     next.DrawItem(buffer);
     next.Send(client, NextRankPanelHandler, 20);
     delete next;
-  } else if(CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true)) {
+  } else if(IsFromStaff(client)) {
     CPrintToChat(client, "Sorry dude, you are part of the staff");
   } else {
     CPrintToChat(client, "We can't fetch your data");
@@ -1785,91 +1794,4 @@ public Action OnMessage(int client, int args) {
     return Plugin_Handled;
   }
   return Plugin_Continue;
-}
-
-void printTotalDamageTank(int tank = 0) {
-  int total_health = g_iTankHealth[tank];
-  char Message[256];
-  Format(Message, 256, "\x04[\x05FRAGS\x04]\x01 \x03%s \x04(\x05%d-HP\x04) \x01 was killed by: \n", g_sTankName[tank], total_health);
-  printTotalDamage(tank, g_iTankDamage, Message, total_health);
-}
-
-
-void printTotalDamage(int victim, int[][] damageList, char[] Message, int total_health) {
-  char TempMessage[64];
-  int attackers[MAXPLAYERS+1][3];
-  int attacker_counter = 0;
-  for(int i = 1; i < MaxClients; i++) {
-    int damage = damageList[victim][i];
-    damageList[victim][i] = 0;
-    if(damage > 0) {
-      if(IsClientInGame(i)) {
-        if(!IsFakeClient(i)) {
-          if(GetClientTeam(i) == TEAM_SURVIVORS) {
-            attackers[attacker_counter][0] = i;
-            attackers[attacker_counter][1] = damage;
-            attackers[attacker_counter][2] = iGetPercent(damage, total_health);
-            Players[i].addPoints(attackers[attacker_counter][2]);
-            attacker_counter++;
-          }
-        }
-      }
-    }
-  }
-  if(attacker_counter > 0) {
-    SortCustom2D(attackers, attacker_counter, iSortFunc);
-    int length = (attacker_counter > MAX_FRAGGERS) ? MAX_FRAGGERS : attacker_counter;
-    for (int i = 0; i < length; i++) {
-      Format(TempMessage, sizeof(TempMessage), "{blue}%N: \x01%d\x05[\x04%d%%%%\x05]\n", attackers[i][0], attackers[i][1], attackers[i][2]);
-      StrCat(Message, 256, TempMessage);
-    }	
-    CPrintToChatAll(Message);
-  }
-}
-
-/**
-* Metodo para imprimir los mejores jugadores en cuestion de frags
-* @param int client
-* @return void
-*/
-void printTotalFrags(int client = 0) {
-  char Message[256];
-  char TempMessage[64];
-  Message = "\x04[\x05FRAGS\x04]\x01 ";
-  int fraggers[MAXPLAYERS+1][2];
-  int frag_counter = 0;
-  for(int i = 1; i < MaxClients; i++) {
-    if (Players[i].frags > 0) {
-      if(IsClientInGame(i)) {
-        if(!IsFakeClient(i)) {
-          if(GetClientTeam(i) == TEAM_SURVIVORS) {
-            fraggers[frag_counter][0] = i;
-            fraggers[frag_counter][1] = Players[i].frags;
-            frag_counter++;
-          }
-        }
-      }
-    }
-  }
-  if(frag_counter > 0) {
-    SortCustom2D(fraggers, frag_counter, iSortFunc);
-    bool more_than_one = false;
-    int length = (frag_counter > MAX_FRAGGERS) ? MAX_FRAGGERS : frag_counter;
-    for (int i = 0; i < length; i++) {
-      if (more_than_one) {
-        Format(TempMessage, sizeof(TempMessage), "\x01, {blue}%N: \x01%d", fraggers[i][0], fraggers[i][0]);
-      } else {
-        Format(TempMessage, sizeof(TempMessage), "{blue}%N: \x01%d", fraggers[i][0], fraggers[i][1]);
-        more_than_one = true;
-      }
-      StrCat(Message, sizeof(Message), TempMessage);
-    }	
-    if(client) {
-      CPrintToChat(client, Message);
-    } else {
-      CPrintToChatAll(Message);
-    }
-  } else {
-    CPrintToChatAll("\x04[\x05FRAGS\x04]\x01 Without frags");
-  }
 }

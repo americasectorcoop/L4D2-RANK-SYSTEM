@@ -16,7 +16,7 @@ void RenderMatchInfo(int client, bool for_final) {
   // Loop client
   for (int i = 1; i <= MaxClients; i++) {
     // Check if is real client
-    if (IsRealClient(i)) {
+    if (IsRealClient(i) && !IsFromStaff(i)) {
       // Get Client name
       char player_name[MAX_NAME_LENGTH];
       GetClientName(i, player_name, MAX_NAME_LENGTH);

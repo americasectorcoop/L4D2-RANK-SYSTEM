@@ -282,15 +282,19 @@ enum struct PlayersInfo {
 PlayersInfo Players[MAXPLAYERS + 1];
 
 stock void PlayerFetch(int client) {
-  char query[256];
   Players[client].store(client);
-  Format(query, sizeof(query), "CALL PLAYER_JOINED('%s', '%s', '%s');", Players[client].authid, Players[client].ipv4, Players[client].name);
+  char query[256], authid[64], ipv4[32], name[128];
+  g_database.Escape(Players[client].authid, authid, 64);
+  g_database.Escape(Players[client].ipv4, ipv4, 32);
+  g_database.Escape(Players[client].name, name, 128);
+  Format(query, sizeof(query), "CALL PLAYER_JOINED('%s', '%s', '%s');", authid, ipv4, name);
   g_database.Query(OnPlayerFetch, query, client, DBPrio_High);
 }
 
 public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, int client) {
   if (db == null || results == null) {
     LogError("Query failed! %s", error);
+    return;
   } else if (results.RowCount == 0) {
     LogError("(OnPlayerFetch) Something is wrong: %s");
   } else {

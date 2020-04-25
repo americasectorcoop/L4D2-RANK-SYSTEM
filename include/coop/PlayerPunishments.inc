@@ -1,15 +1,17 @@
-#define VOMIT_MIN_DAMAGE 70
-#define VOMIT_MAX_DAMAGE 120
+#define VOMIT_MIN_DAMAGE 50
+#define VOMIT_MAX_DAMAGE 70
 
 #define TK_MIN_DAMAGE 70
 #define TK_MAX_DAMAGE 240
+
+#define TK_BAN_REASON "Team killing"
 
 bool bIsKarmaBanSystemActived = false;
 
 native int KarmaBan(int client, int target, int reason_id);
 
 public void PunishmentsOnAllPluginsLoaded() {
-	bIsKarmaBanSystemActived = GetFeatureStatus(FeatureType_Native, "KarmaBan") == FeatureStatus_Available;
+  bIsKarmaBanSystemActived = GetFeatureStatus(FeatureType_Native, "KarmaBan") == FeatureStatus_Available;
 }
 
 // los valores minimos son para iniciar votos
@@ -31,7 +33,7 @@ void PunishVomiter(int client, int damage) {
   } else if(Players[client].team_vomit.requirePunishment(VOMIT_MAX_DAMAGE)) {
     if(IsVoteInProgress()) CancelVote();
     ForcePlayerSuicide(Players[client].id);
-    Players[client].team_vomit.reset();
+    // Players[client].team_vomit.reset();
     CPrintToChatAll(
       "{blue}%N \x01has been slayed, because {blue}threw up\x01 the team \x04[\x05{green}%i TK\x04]",
       Players[client].id,
@@ -51,7 +53,7 @@ void PunishTeamKiller(int client, int damage) {
       Players[client].id,
       Players[client].team_killer.counter
     );
-    ServerCommand("sm_voteban #%d", GetClientUserId(Players[client].id));
+    ServerCommand("sm_voteban #%d \"%s\"", GetClientUserId(Players[client].id), TK_BAN_REASON);
   } else if(Players[client].team_killer.requirePunishment(TK_MAX_DAMAGE)) {
     if(IsVoteInProgress()) CancelVote();
     CPrintToChatAll(
@@ -62,7 +64,7 @@ void PunishTeamKiller(int client, int damage) {
     if(bIsKarmaBanSystemActived) {
       KarmaBan(0, client, 1);
     } else {
-      BanClient(client, 60, BANFLAG_AUTO, "Team killer", "You have been banned because Team Killer");
+      BanClient(client, 60, BANFLAG_AUTO, TK_BAN_REASON, "You have been banned because Team Killer", "sm_rank_system");
     }
   }
 }
