@@ -19,7 +19,7 @@ BEGIN
     WHEN 1 THEN
       BEGIN
         -- Actualizando la informacion del jugador
-        UPDATE players SET last_time_online = UNIX_TIMESTAMP(), ip_address = _ipv4, nickname = _name WHERE steamid = _auth_id;
+        UPDATE players SET last_time_online = UNIX_TIMESTAMP(), ip_address = _ipv4, nickname = _name, server_join = server_join + 1 WHERE steamid = _auth_id;
         -- Obteniendo la informacion del jugador
         SELECT
           IF(B.id IS NOT NULL , 1, 0) AS is_banned,
@@ -49,7 +49,7 @@ BEGIN
         */
         INSERT INTO players( steamid, points, ip_address, nickname, created_at, last_time_online)
           VALUES ( _auth_id , 0, _ipv4, _name, NOW(), UNIX_TIMESTAMP())
-          ON DUPLICATE KEY UPDATE last_time_online = UNIX_TIMESTAMP(), ip_address = _ipv4, nickname = _name;
+          ON DUPLICATE KEY UPDATE last_time_online = UNIX_TIMESTAMP(), ip_address = _ipv4, nickname = _name, server_join = server_join + 1;
         -- Obteniendo los puntos del jugador
         SELECT points INTO _players_points FROM players WHERE steamid = _auth_id;
         -- Obteniendo los puntos del rango que esta arriba del jugador

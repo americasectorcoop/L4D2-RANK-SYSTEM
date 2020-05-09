@@ -63,10 +63,8 @@ stock bool bIsFirstMapOfCampaign() {
 * Método para obtener la clase de un zombie
 */
 stock int iGetZombieClass(int client) {
-  if(IsValidEntity(client)) {
-    if(IsValidEdict(client)) {
-      return GetEntProp(client, Prop_Send, "m_zombieClass");
-    }
+  if (IsValidEntity(client) && IsValidEdict(client)) {
+    return GetEntProp(client, Prop_Send, "m_zombieClass");
   }
   return 0;
 }
@@ -98,4 +96,15 @@ bool bRealClients(int player1, int player2) {
 
 bool IsFromStaff(int client) {
   return CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true);
+}
+
+bool AllPlayersAlive() {
+  for (int i = 1; i <= MaxClients; i++) {
+    if(IsRealClient(i)) {
+      if(!IsPlayerAlive(i)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }

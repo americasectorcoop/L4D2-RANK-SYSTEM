@@ -85,7 +85,7 @@ enum struct PlayersInfo {
   int killed_by_spitter;
   int killed_by_tank;
   int killed_by_witch;
-  int last_vote_bantime;
+  int killed_by_mob;
   int left4dead;
   int melee_kills;
   int new_points;
@@ -104,12 +104,19 @@ enum struct PlayersInfo {
   int self_adrenaline;
   int self_cured;
   int self_pills;
+  // join and left pueden ser manejados en los procedimientos de actualizacion
   int server_join;
   int server_left;
   int spokentime;
   int start_time;
   // numero de kicks en la ronda...
   int vote_kick;
+  int tank_nemesis;
+  int witch_nemesis;
+  int times_muted;
+  int mute_others;
+  int times_kicked;
+  int times_vkick;
 
   PlayerDamage team_killer;
   PlayerDamage team_vomit;
@@ -128,7 +135,7 @@ enum struct PlayersInfo {
 
   char getQuery() {
     char sqlcode[2048];
-    Format(sqlcode, 2048, "CALL PLAYER_UPDATE ('%s', %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d);",
+    Format(sqlcode, 2048, "CALL PLAYER_UPDATE ('%s', %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d);",
       this.authid, // Steam id del jugador
       this.boxes_open, // *
       this.boxes_specials_open,
@@ -187,7 +194,14 @@ enum struct PlayersInfo {
       this.self_pills,
       this.server_join,
       this.server_left,
-      this.spokentime
+      this.spokentime,
+      this.killed_by_mob,
+      this.times_muted,
+      this.mute_others,
+      this.tank_nemesis,
+      this.witch_nemesis,
+      this.times_kicked,
+      this.times_vkick
     );
     return sqlcode;
   }
@@ -231,27 +245,27 @@ enum struct PlayersInfo {
   void renderColor() {
     if(!IsRealClient(this.id) || GetClientTeam(this.id) != TEAM_SURVIVORS || !IsPlayerAlive(this.id)) return;
     if(CheckCommandAccess(this.id, "sm_fk", ADMFLAG_ROOT, true)) {
-      SetEntityRenderColor(this.id, 0, 0, 0, 255); // Negro para administrador
+      SetEntityRenderColor(this.id, 0, 0, 0, 255);
     } else if(CheckCommandAccess(this.id, "sm_fk", ADMFLAG_GENERIC, true)) {
-      SetEntityRenderColor(this.id, 0, 176, 246, 255); // Cyan
+      SetEntityRenderColor(this.id, 0, 188, 212, 255); // Cyan
     } else if (this.points > 1280000) {
-      SetEntityRenderColor(this.id, 102, 51, 0, 255); // Cafe
+      SetEntityRenderColor(this.id, 121, 85, 72, 255); // Cafe
     } else if (this.points > 640000) {
-      SetEntityRenderColor(this.id, 255, 97, 3, 255); // Orange color
+      SetEntityRenderColor(this.id, 255, 87, 34, 255); // Orange color
     } else if (this.points > 320000) {
-      SetEntityRenderColor(this.id, 255, 0, 0, 255); // Red color
+      SetEntityRenderColor(this.id, 244, 67, 54, 255); // Red color
     } else if (this.points > 160000) {
-      SetEntityRenderColor(this.id, 255, 104, 240, 255); // pink color FF68F0
+      SetEntityRenderColor(this.id, 233, 30, 99, 255); // pink color FF68F0
     } else if (this.points > 80000) {
-      SetEntityRenderColor(this.id, 102, 25, 140, 255); // purple 66198C
+      SetEntityRenderColor(this.id, 103, 58, 183, 255); // purple 66198C
     } else if (this.points > 40000) {
-      SetEntityRenderColor(this.id, 0, 139, 0, 255); // green color
+      SetEntityRenderColor(this.id, 76, 175, 80, 255); // green color
     } else if (this.points > 20000) {
-      SetEntityRenderColor(this.id, 0, 0, 255, 255); // Blue colour
+      SetEntityRenderColor(this.id, 63, 81, 181, 255); // Blue colour
     } else if (this.points > 10000) {
-      SetEntityRenderColor(this.id, 255, 255, 0, 255); // yellow
+      SetEntityRenderColor(this.id, 255, 235, 59, 255); // yellow
     } else if (this.points > 5000) {
-      SetEntityRenderColor(this.id, 173, 255, 47, 255); // light green color
+      SetEntityRenderColor(this.id, 139, 195, 74, 255); // light green color
     }
   }
 
@@ -356,4 +370,20 @@ public int Native_TYSTATS_GetRank(Handle plugin, int numParams) {
 
 public int Native_TYSTATS_GetPlayTime(Handle plugin, int numParams) {
   return Players[GetNativeCell(1)].playtime;
+}
+
+public int Native_IncrementGiftTaken(Handle plugin, int numParams) {
+  int client = GetNativeCell(1);
+  if(IsRealClient(client)) {
+    Players[client].gift_taken++;
+  }
+  return 1;
+}
+
+public int Native_IncrementBoxSpecials(Handle plugin, int numParams) {
+  int client = GetNativeCell(1);
+  if(IsRealClient(client)) {
+    Players[client].boxes_specials_open++;
+  }
+  return 1;
 }

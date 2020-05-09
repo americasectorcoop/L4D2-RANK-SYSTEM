@@ -1,4 +1,4 @@
-DROP PROCEDURE `PLAYER_UPDATE`;
+DROP PROCEDURE IF EXISTS `PLAYER_UPDATE`;
 DELIMITER $$
   CREATE PROCEDURE
     `PLAYER_UPDATE`
@@ -60,7 +60,14 @@ DELIMITER $$
       IN `_self_pills` INT,
       IN `_server_join` INT,
       IN `_server_left` INT,
-      IN `_spokentime` INT
+      IN `_spokentime` INT,
+      IN `_killed_by_mob` INT,
+      IN `_times_muted` INT,
+      IN `_mute_others` INT,
+      IN `_tank_nemesis` INT,
+      IN `_witch_nemesis` INT,
+      IN `_times_kicked` INT,
+      IN `_times_vkick` INT
     )
     MODIFIES SQL DATA
     COMMENT 'Update info from server l4d2'
@@ -124,7 +131,14 @@ DELIMITER $$
       self_pills = self_pills + _self_pills,
       server_join = server_join + _server_join,
       server_left = server_left + _server_left,
-      spokentime = spokentime + _spokentime
+      spokentime = spokentime + _spokentime,
+      killed_by_mob = killed_by_mob + _killed_by_mob,
+      times_muted = times_muted + _times_muted,
+      mute_others = mute_others + _mute_others,
+      tank_nemesis = tank_nemesis + _tank_nemesis,
+      witch_nemesis = witch_nemesis + _witch_nemesis,
+      times_kicked = times_kicked + _times_kicked,
+      times_vkick = times_vkick + _times_vkick
     WHERE steamid = SteamIdTo64(_steamid);
   END$$
 DELIMITER ;

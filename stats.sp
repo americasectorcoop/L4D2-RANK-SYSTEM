@@ -1,27 +1,6 @@
-/*
-  Stats for l4d2
-  Copyright (C) 2015-2018 Alejandro Suárez (Aleexxx)
-
-  This program is free software; you can redistribute it and/or
-  modify it under the terms of the GNU General Public License
-  as published by the Free Software Foundation; either version 2
-  of the License, or (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the
-
-  Free Software Foundation, Inc.
-  51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-*/
-
+#include <sourcemod>
 #pragma semicolon 1
 #pragma newdecls required
-#include <sourcemod>
 #include <sdktools>
 #include <sdkhooks>
 #include <colors>
@@ -58,27 +37,19 @@
 #define SOUND_MAPTIME_FINISH "level/bell_normal.wav"
 #define SOUND_JOIN "ui/beepclear.wav"
 
-bool g_bPlayerIgnore[MAXPLAYERS+1][MAXPLAYERS+1];
-
-// int g_roundsMap = 1;
 int g_iPillsGiven[4096];
 int g_iAdrenalineGiven[4096];
 int g_iStatsBalans = 0;
-// int bonus = 0;
 
 // Numero de jugadores registrados
 int g_iRegisteredPlayers = 0;
 int g_iFailedAttempts = 0;
-// int g_iTkBlockMin = 70;
-// int g_iTkBlockMax = 240;
 
 float g_fRankSum = 0.0;
 float g_fMapTimingStartTime = -1.0;
 
 bool g_pointsEnabled = true;
-bool g_isRoundStarted = false;
 
-// ConVar hm_count_fails;
 ConVar l4d2_rankmod_mode;
 ConVar l4d2_rankmod_min;
 ConVar l4d2_rankmod_max;
@@ -101,6 +72,8 @@ ConVar l4d2_difficulty_multiplier;
 #include <coop/PlayerFrags>
 #include <coop/autodifficulty>
 #include <coop/damage>
+#include <coop/votes/mute>
+#include <coop/votes/kick>
 
 public Plugin myinfo = {
   name = "Rank System",
@@ -141,6 +114,10 @@ public void OnPluginStart() {
   HookEvent("witch_killed", OnEventWitchKilled);
   HookEvent("witch_harasser_set", OnWitchDisturb);
 
+  HookEvent("upgrade_pack_added", OnUpgradePackAdded);
+  HookEvent("pills_used", OnPlayerPillsUsed);
+  HookEvent("adrenaline_used", OnPlayerAdrenalineUsed);
+  HookEvent("player_disconnect", OnPlayerDisconnect);
   HookEvent("player_death", OnPlayerDeath);
   HookEvent("player_incapacitated", OnPlayerIncap);
   HookEvent("player_hurt", OnPlayerHurt);
@@ -156,7 +133,6 @@ public void OnPluginStart() {
   HookEvent("finale_win", OnFinalWin);
   HookEvent("player_left_start_area", OnStartAreaPost, EventHookMode_Post);
   HookEvent("player_left_checkpoint", OnStartAreaPost, EventHookMode_Post);
-  HookEvent("round_end", OnRoundEnd);
   HookEvent("molotov_thrown", OnMolotovThrown);
   HookEvent("melee_kill", OnMeleeKill);
   HookEvent("tank_spawn", OnTankSpawn); 
@@ -167,8 +143,6 @@ public void OnPluginStart() {
 
   RegConsoleCmd("sm_chat_colors", cmdChatColors);
   RegConsoleCmd("sm_rank", cmdRank, "sm_rank <target>");
-  // RegConsoleCmd("sm_assist", cmdFactorTop, "sm_assist");
-  // RegConsoleCmd("sm_factortop", cmdFactorTop, "sm_factortop");
   RegConsoleCmd("sm_top", cmdTop);
   RegConsoleCmd("sm_nextrank", cmdNextRank);
   RegConsoleCmd("sm_points", cmdPoints);
@@ -184,13 +158,10 @@ public void OnPluginStart() {
   RegConsoleCmd("say", OnMessage);
   RegConsoleCmd("say_team", OnMessage);
 
-  // RegAdminCmd("sm_updateplayers", cmdUpdatePlayers, ADMFLAG_ROOT, "Envia los puntos al servidor");
   RegAdminCmd("sm_points_on", cmdPointsOn, ADMFLAG_GENERIC, "Activa los puntos de la partida");
   RegAdminCmd("sm_points_off", cmdPointsOff, ADMFLAG_GENERIC, "Desactiva los puntos de la partida");
 
   RegAdminCmd("sm_givepoints", cmdGivePoints, ADMFLAG_ROOT, "sm_givepoints <target> [Score]");
-
-  // hm_count_fails = CreateConVar("hm_count_fails", "1", "");
 
   l4d2_rankmod_mode = CreateConVar("l4d2_rankmod_mode", "0", "");
   l4d2_rankmod_min = CreateConVar("l4d2_rankmod_min", "0.5", "");
@@ -208,6 +179,8 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
   CreateNative("TYSTATS_GetPoints", Native_TYSTATS_GetPoints);
   CreateNative("TYSTATS_GetRank", Native_TYSTATS_GetRank);
   CreateNative("TYSTATS_GetPlayTime", Native_TYSTATS_GetPlayTime);
+  CreateNative("TYSTATS_IncrementGiftTaken", Native_IncrementGiftTaken);
+  CreateNative("TYSTATS_IncrementBoxSpecials", Native_IncrementBoxSpecials);
   MarkNativeAsOptional("KarmaBan");
   return APLRes_Success;
 }
@@ -220,48 +193,46 @@ public void OnAllPluginsLoaded() {
 void OnDatabaseConnected() {
   PrintToServer("Conexión a base de datos exitosa");
   GetTotalPlayers();
-  // OnMapStart();
+}
+
+public Action OnUpgradePackAdded(Event event, const char[] name, bool dontBroadcast) {
+  int client = GetClientOfUserId(event.GetInt("userid"));
+  if(IsRealClient(client)) {
+    Players[client].boxes_open++;
+  }
+  return Plugin_Continue;
+}
+
+public Action OnPlayerPillsUsed(Event event, const char[] name, bool dontBroadcast) {
+  int client = GetClientOfUserId(event.GetInt("userid"));
+  if(IsRealClient(client)) {
+    Players[client].self_pills++;
+  }
+  return Plugin_Continue;
+}
+
+public Action OnPlayerAdrenalineUsed(Event event, const char[] name, bool dontBroadcast) {
+  int client = GetClientOfUserId(event.GetInt("userid"));
+  if(IsRealClient(client)) {
+    Players[client].self_adrenaline++;
+  }
+  return Plugin_Continue;
+}
+
+public Action OnPlayerDisconnect(Event event, const char[] name, bool dontBroadcast) {
+  int client = GetClientOfUserId(event.GetInt("userid"));
+  if(IsRealClient(client)) {
+    char reason[32];
+    event.GetString("reason", reason, 32);
+    if(StrContains(reason, "Disconnect by user") != -1) {
+      Players[client].server_left++;
+    }
+  }
+  return Plugin_Continue;
 }
 
 public Action cmdFrags(int client, int args) {
   RenderPlayerFrags(client);
-}
-
-/**
- * Function for mute player
- * @param  client
- * @param  args 	: name of client
- * @return Plugin_Handled
- */
-public Action cmdMute(int client, int args) {
-  // Verificando que el cliente sea valido
-  if (client != 0) {
-    // Verificando si el cliente no inserto ningun argumento
-    if (args == 0) {
-      // Mostrando listas por defecto
-      ShowPlayerListMute(client);
-    } else {
-      // Inicializando variables
-      char arg[65];
-      GetCmdArg(1, arg, sizeof(arg));
-      char target_name[MAX_TARGET_LENGTH];
-      int target_list[MAXPLAYERS], targets, target;
-      bool tn_is_ml;
-      
-      if ((targets = ProcessTargetString(arg, client, target_list, MAXPLAYERS, 0, target_name, sizeof(target_name), tn_is_ml)) <= 0) {
-        // Enviando error al cliente
-        ReplyToTargetError(client, targets);
-      } else {
-        // Recorriendo targets
-        for (int i = 0; i < targets; i++) {
-          target = target_list[i];
-          ToggleIgnoreStatus(client, target);
-        }
-      }
-    }
-
-  }
-  return Plugin_Handled;
 }
 
 public void OnFetchTotalPlayers(Database db, DBResultSet results, const char[] error, any data) {
@@ -286,80 +257,19 @@ public void OnClientDisconnect(int client) {
   }
 }
 
-public int ShowPlayerListMute(int client) {
-  char str_userid[12];
-  char str_name[128];
-  Menu menu = CreateMenu(MenuHandler_PlayerList);
-  menu.SetTitle("Ignore voice");
-  menu.ExitButton = true;
-  str_userid[0] = 0;
-  for(int i = 1; i <= MaxClients; i++) {
-    if (i != client) {
-      if(IsClientInGame(i)) {
-        if(!IsFakeClient(i)) {
-          IntToString(GetClientUserId(i), str_userid, sizeof(str_userid));
-          if (g_bPlayerIgnore[client][i]) {
-            Format(str_name, sizeof(str_name), "%N [Listening]", i);
-          } else {
-            Format(str_name, sizeof(str_name), "%N [Silenced]", i);
-          }
-          menu.AddItem(str_userid, str_name);
-        }
-      }
-    }
-  }
-  if(str_userid[0] == 0) {
-    menu.AddItem("", "No available players", ITEMDRAW_DISABLED);
-  }
-  menu.Display(client, MENU_TIME_FOREVER);
-}
-
-public int MenuHandler_PlayerList(Menu menu, MenuAction action, int client, int Item) {
-  switch(action) {
-    case MenuAction_End: delete menu;
-    case MenuAction_Select: {
-      char sUserID[12];
-      int target;
-      menu.GetItem(Item, sUserID, sizeof(sUserID));
-      target = GetClientOfUserId(StringToInt(sUserID));
-      if (target) {
-        g_bPlayerIgnore[client][target] = !g_bPlayerIgnore[client][target];
-        if (g_bPlayerIgnore[client][target]) {
-          SetListenOverride(client, target, Listen_No);
-          CPrintToChat(client, "The player {blue}%N \x01turned {blue}off\x01 the microphone.", target);
-        } else {
-          if (GetClientTeam(client) == GetClientTeam(target)) {
-            SetListenOverride(client, target, Listen_Yes);
-          }
-          CPrintToChat(client, "The player {blue}%N \x01turned {blue}on\x01 the microphone.", target);
-        }
-      } else {
-        CPrintToChat(client, "The player is no longer available!");
-      }
-      ShowPlayerListMute(client);
-    }
-  }
-}
-
-public int ToggleIgnoreStatus(int client, int target) {	
-  g_bPlayerIgnore[client][target] = !g_bPlayerIgnore[client][target];
-  if (g_bPlayerIgnore[client][target]) {
-    SetListenOverride(client, target, Listen_No);
-    CPrintToChat(client, "The player {blue}%N \x01turned {blue}off\x01 the microphone.", target);
-  } else {
-    SetListenOverride(client, target, Listen_Yes);
-    CPrintToChat(client, "The player {blue}%N \x01turned {blue}on\x01 the microphone.", target);
-  }
-}
-
-public void UpdatePlayersStats() {
+public void UpdatePlayersStats(bool final) {
   PrintToServer("ENVIANDO ESTADISTICAS AL SERVIDOR");
   // Instanciando metodo de trasaction
   Transaction transaction = new Transaction();
+  bool all_players_alive = final ? AllPlayersAlive() : false;
   // Inicializando variables para guardar el query y el steam id
   for (int i = 1; i <= MaxClients; i++) {
     // Verificando que cliente sea real
     if(IsRealClient(i)) {
+      if(final) {
+        Players[i].rounds_all_survive = all_players_alive ? 1 : 0;
+        Players[i].rounds_successful = 1;
+      }
       transaction.AddQuery(Players[i].getQuery());
       PlayerReset(i);
     }
@@ -402,7 +312,6 @@ public Action MapStart(Handle timer) {
 }
 
 public void OnMapStart() {
-  // g_roundsMap = 1;
   ADOnMapStart();
   PrecacheSound(SOUND_JOIN, true);
   PrecacheSound(SOUND_MAPTIME_START, true);
@@ -448,7 +357,6 @@ public Action OnMolotovThrown(Event event, const char[] name, bool dontBroadcast
 public Action OnRoundStart(Event event, const char[] name, bool dontBroadcast) {
   ADRoundStart();
   g_pointsEnabled = true;
-  g_isRoundStarted = true;
   g_iStatsBalans = 0;
   // bonus = 0;
   g_fMapTimingStartTime = 0.0;
@@ -457,16 +365,6 @@ public Action OnRoundStart(Event event, const char[] name, bool dontBroadcast) {
     Players[i].rounds++;
   }
   return Plugin_Continue;
-}
-
-public Action OnRoundEnd(Event event, const char[] name, bool dontBroadcast) {
-  if (!g_isRoundStarted) {
-    return;
-  }
-  for (int i = 1; i <= MaxClients; i++) {
-    Players[i].rounds++;
-  }
-  g_iFailedAttempts++;
 }
 
 /**
@@ -488,12 +386,8 @@ public void OnClientPostAdminCheck(int client) {
 
 public Action OnWitchDisturb(Event event, const char[] name, bool dontBroadcast) {
   int client = GetClientOfUserId(event.GetInt("userid"));
-  if(client) {
-    if(IsValidEntity(client)) {
-      if(!IsFakeClient(client)) {
-        Players[client].counter_witch_disturb += 1;
-      }
-    }
+  if (IsRealClient(client) && GetClientTeam(client) == TEAM_SURVIVORS) {
+    Players[client].counter_witch_disturb += 1;
   }
   return Plugin_Continue;
 }
@@ -504,7 +398,6 @@ public Action OnEventWitchKilled(Event event, const char[] name, bool dontBroadc
   int score = cvar_Witch.IntValue + g_iStatsBalans + Players[client].bonus_points;
   Players[client].kill_witches += 1;
   Players[client].addPoints(score);
-  CPrintToChatAll("{blue}%N {green}killed {blue}Witch", client);
   return Plugin_Continue;
 }
 
@@ -541,7 +434,7 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
             }
           }
         } else if(victim_team == TEAM_INFECTED) {
-          int special_infected = GetEntProp(victim, Prop_Send, "m_zombieClass");
+          int special_infected = iGetZombieClass(victim);
           if(special_infected == ZC_SMOKER) {
             score = cvar_Smoker.IntValue + bonus_points;
             Players[attacker].kill_smookers += 1;
@@ -560,8 +453,6 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
           } else if(special_infected == ZC_CHARGER) {
             score = cvar_Charger.IntValue + bonus_points;
             Players[attacker].kill_chargers += 1;
-          } else if(special_infected == ZC_WITCH) {
-            CPrintToChatAll("Si jala el evento que pedo :v");
           } else if(special_infected == ZC_TANK) {
             score = cvar_Tank.IntValue + bonus_points;
             Players[attacker].kill_tanks += 1;
@@ -577,25 +468,21 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
           Players[attacker].kill_zombies++;
           Players[attacker].headshots += headshot;
           if ((Players[attacker].kill_zombies % KILL_COUNT_INFECTED) == 0) {
-            score = 5  + bonus_points;
+            score = 5 + bonus_points;
             PrintCenterText(attacker, "Infected killed: %d", Players[attacker].kill_zombies);
           }
-        } else {
-          // Eventos detectados
-          // Witch
-          // PrintToChatAll("[stats] Asesinato de %s", victim_name);
         }
       }
       Players[attacker].addPoints(score);
     } else {
-      CPrintToChatAll("%N se ha suicidado :O", attacker);
+      Players[victim].counter_suicide += 1;
     }
   // esto para saber quien es el principal nemesis de cada jugador
   // al ser asesinado un jugador por un enemigo xD
-  } else if(IsRealClient(victim)) {
+  } else if(IsRealClient(victim) && GetClientTeam(victim) == TEAM_SURVIVORS) {
     // Guardando el grupo de la victima
     if(IsValidClient(attacker) && GetClientTeam(attacker) == TEAM_INFECTED) {
-      int special_infected = GetEntProp(attacker, Prop_Send, "m_zombieClass");
+      int special_infected = iGetZombieClass(attacker);
       if(special_infected == ZC_SMOKER) {
         Players[victim].killed_by_smooker += 1;
       } else if(special_infected == ZC_BOOMER) {
@@ -608,16 +495,17 @@ public Action OnPlayerDeath(Event event, const char[] name, bool dontBroadcast) 
         Players[victim].killed_by_jockey += 1;
       } else if(special_infected == ZC_CHARGER) {
         Players[victim].killed_by_charger += 1;
-      } else if(special_infected == ZC_WITCH) {
-        CPrintToChatAll("Si jala el evento que pedo :v");
       } else if(special_infected == ZC_TANK) {
         Players[victim].killed_by_tank += 1;
       }
     } else {
-      // char VictimName[MAX_LINE_WIDTH];
-      // event.GetString("victimname", VictimName, sizeof(VictimName));
-      // TODO: FALTA AÑADIR CUANDO SE ASESINA POR UN MOB
-      // PrintToChatAll("%s", VictimName);
+      char attacker_name[MAX_LINE_WIDTH];
+      event.GetString("attackername", attacker_name, sizeof(attacker_name));
+      if(StrEqual(attacker_name, "Witch", false)) {
+        Players[victim].killed_by_witch += 1;
+      } else if(StrEqual(attacker_name, "Infected", false)) {
+        Players[victim].killed_by_mob += 1;
+      }
     }
   }
   return Plugin_Continue;
@@ -686,6 +574,7 @@ public Action OnPlayerHurt(Event event, const char[] name, bool dontBroadcast) {
     PunishTeamKiller(attacker, damage);
     CPrintToChat(target, "{blue}%N \x05attacked {blue}you \x04[\x05%i TK\x04]", attacker, Players[attacker].team_killer.counter);
     CPrintToChat(attacker, "{blue}You \x05attacked {blue}%N \x04[\x05%d TK\x04]", target, Players[attacker].team_killer.counter);
+    Players[attacker].friends_damage += damage;
   } else if(team_target == TEAM_INFECTED) {
     int special_infected = GetEntProp(target, Prop_Send, "m_zombieClass");
     if(special_infected == ZC_TANK) {
@@ -806,6 +695,7 @@ public Action OnAward(Event event, const char[] name, bool dontBroadcast) {
       // Verificando que el objetivo sea valido
       if(target) {
         Players[client].friends_protected += 1;
+        Players[client].addPoints(2);
       }
     }
     // Pills given
@@ -850,6 +740,10 @@ public Action OnAward(Event event, const char[] name, bool dontBroadcast) {
     // Let infected in safe room
     case 95: {
       Players[client].infected_let_in_safehouse += 1;
+    }
+    case 99: { // Round restart
+      g_iFailedAttempts++;
+      Players[client].rounds_failed += 1;
     }
   }
   return Plugin_Continue;
@@ -1074,14 +968,12 @@ public Action cmdTop(int client, int args)
       top = top < 5 ? 5 : top;
     }
   }
-  if (client) {
-    if (IsClientInGame(client)) {
-      if (!IsFakeClient(client)) {
-        char query[256];
-        Format(query, sizeof(query), "CALL PLAYER_TOP(0, %d);", top);
-        SQL_TQuery(g_database, DisplayTop, query, client, DBPrio_Low);
-      }
-    }
+  if (IsRealClient(client)) {
+    char query[256];
+    Format(query, sizeof(query), "CALL PLAYER_TOP(0, %d);", top);
+    SQL_TQuery(g_database, DisplayTop, query, client, DBPrio_Low);
+  } else {
+    CPrintToChat(client, "\x04[\x05ASC\x04]\x01 Please set a valid player");
   }
   return Plugin_Handled;
 }
@@ -1232,62 +1124,6 @@ public Action cmdPlaytime(int client, int args) {
   }
 }
 
-public Action cmdVoteKick(int client, int args) {
-  if(	CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true) || 
-    CheckCommandAccess(client, "sm_fk", ADMFLAG_GENERIC, true) ||
-    (Players[client].rank > 0 && Players[client].rank < 21)) {
-    if(Players[client].vote_kick < 3) {
-      ShowVoteKickList(client);
-    } else {
-      PrintToChat(client, "\x04[\x05ASC\x04]{default} You has try to kick more that {blue}3 times{default}, wait for the next map.");
-    }
-  } else {
-    PrintToChat(client, "\x04[\x05ASC\x04]{default} You don't have access to this command.");
-  }
-}
-
-public int ShowVoteKickList(int client) {
-  Menu hMenu = CreateMenu(MenuHandler_VoteKick);
-  char str_name[256], str_userid[11];	
-  hMenu.SetTitle("Vote Kick");
-  hMenu.ExitButton = true;
-  int players = 0;
-  for(int i = 1; i <= MaxClients; i++) {
-    if(client != i) {
-      if (IsClientInGame(i)) {
-        if (!IsFakeClient(i)) {
-          if(!CheckCommandAccess(i, "sm_fk", ADMFLAG_GENERIC, true)) {
-            IntToString(i, str_userid, sizeof(str_userid));
-            Format(str_name, sizeof(str_name), "%N [RANK: %d]", i, Players[i].rank);
-            hMenu.AddItem(str_userid, str_name);
-            players++;
-          }
-        }
-      }
-    }
-  }
-  if (players == 0) {
-    hMenu.AddItem("", "No available players", ITEMDRAW_DISABLED);
-  }
-  hMenu.Display(client, MENU_TIME_FOREVER);
-}
-
-
-public int MenuHandler_VoteKick(Menu menu, MenuAction action, int client, int item) {
-  switch(action) {
-    case MenuAction_End: delete menu;
-    case MenuAction_Select: {
-      char char_user_id[12];
-      menu.GetItem(item, char_user_id, sizeof(char_user_id));
-      int target_user_id = StringToInt(char_user_id);
-      if(target_user_id > 0) {
-        Players[client].vote_kick += 1;
-        ServerCommand("sm_votekick \"#%d\" \"%s %N\"", GetClientUserId(target_user_id), "Vote kick, started by ", client);
-        CPrintToChatAll("\x04[\x05ASC\x04] %N\x01 start a vote kick for \x04%N", client, target_user_id);
-      }
-    }
-  }
-}
 
 public Action cmdFactor(int client, int args)
 {
@@ -1549,7 +1385,7 @@ public Action OnMapTransition(Event event, const char[] name, bool dontBroadcast
 public Action OnFinalWin(Event event, const char[] name, bool dontBroadcast){
   // StopMapTiming();
   // PrintMapPoints();
-  UpdatePlayersStats();
+  UpdatePlayersStats(true);
 }
 
 void PrintMapPoints() {
@@ -1658,7 +1494,7 @@ public Action cmdRank(int client, int args) {
 }
 
 public Action OnAnyVote(int client, int args) {
-  PrintToChat(client, "\x01Vote access denied!");
+  CPrintToChat(client, "\x04Vote access {red}denied\x01!");
   return Plugin_Handled;
 }
 
@@ -1699,7 +1535,7 @@ public void StopMapTiming(){
     char TimeLabel[32];
     vGetTimeLabel(TotalTime, TimeLabel, sizeof(TimeLabel));
     EmitSoundToAll(SOUND_MAPTIME_FINISH);
-    CPrintToChatAll("\x05It took \x04%s\x05 to finish this map!", TimeLabel);
+    CPrintToChatAll("It took \x04%s \x01to finish this map!", TimeLabel);
   }
 }
 
