@@ -8,7 +8,7 @@
 #include <data/teams>
 #include <stats/database>
 
-#define DEBUG true
+#define DEBUG false
 
 #if SOURCEMOD_V_MINOR < 7
  #error Old version sourcemod!
@@ -149,7 +149,7 @@ public void OnPluginStart() {
   RegConsoleCmd("sm_playtime", cmdPlaytime);
   RegConsoleCmd("sm_vkick", cmdVoteKick);
 
-  RegConsoleCmd("sm_factor", cmdFactor);
+  // RegConsoleCmd("sm_factor", cmdFactor);
   RegConsoleCmd("sm_colors", cmdColors);
   RegConsoleCmd("sm_maptop", cmdMapTop);
   RegConsoleCmd("sm_ranksum", cmdRankSum);
@@ -236,9 +236,8 @@ public Action cmdFrags(int client, int args) {
 }
 
 public void OnFetchTotalPlayers(Database db, DBResultSet results, const char[] error, any data) {
-  if (db == null || results == null) {
+  if (!db || !results || error[0]) {
     LogError("Query failed! %s", error);
-    SetFailState("(OnPlayerFetch) Something is wrong: %s", error);
   } else {
     while (results.FetchRow()) {
       g_iRegisteredPlayers = results.FetchInt(0);
@@ -274,7 +273,7 @@ public void UpdatePlayersStats(bool final) {
       PlayerReset(i);
     }
   }
-  g_database.Execute(transaction, onPlayerUpdated, OnUpdatePlayersStatsFailure, _, DBPrio_High);
+  g_database.Execute(transaction, onPlayerUpdated, OnUpdatePlayersStatsFailure, _, DBPrio_Low);
 }
 
 public void UpdatePlayer(int client) {
@@ -283,7 +282,7 @@ public void UpdatePlayer(int client) {
     Transaction transaction = new Transaction();
     transaction.AddQuery(Players[client].getQuery());
     PlayerReset(client);
-    g_database.Execute(transaction, onPlayerUpdated, threadFailure, client, DBPrio_High);
+    g_database.Execute(transaction, onPlayerUpdated, threadFailure, client, DBPrio_Low);
   }
 }
 
@@ -635,7 +634,7 @@ public Action OnReviveSuccess(Event event, const char[] name, bool dontBroadcast
 }
 
 public Action OnPlayerNowIt(Event event, const char[] name, bool dontBroadcast) {
-  if(GetEventBool(event, "by_boomer")) return Plugin_Continue;
+  if(event.GetBool("by_boomer")) return Plugin_Continue;
   int attacker = GetClientOfUserId(event.GetInt("attacker"));
   int victim = GetClientOfUserId(event.GetInt("userid"));
     // Verificando que el atacante este en juego
@@ -956,10 +955,8 @@ public int MenuHandler_Rank(Menu menu, MenuAction action, int client, int index)
 public Action cmdTop(int client, int args)
 {
   int top = 10;
-  if (args >= 1) {
-    char arg[2];
-    GetCmdArg(1, arg, 2);
-    top = StringToInt(arg);
+  if (args > 1) {
+    top = GetCmdArgInt(1);
     if(top == 0) {
       CPrintToChat(client, "\x04[\x05ASC\x04]\x01 You can set the first parameter as a number between 5 and 20, example: !top 15");
       top = 10;
@@ -971,45 +968,45 @@ public Action cmdTop(int client, int args)
   if (IsRealClient(client)) {
     char query[256];
     Format(query, sizeof(query), "CALL PLAYER_TOP(0, %d);", top);
-    SQL_TQuery(g_database, DisplayTop, query, client, DBPrio_Low);
+    g_database.Query(DisplayTop, query, client, DBPrio_Low);
   } else {
     CPrintToChat(client, "\x04[\x05ASC\x04]\x01 Please set a valid player");
   }
   return Plugin_Handled;
 }
 
-public void DisplayTop(Handle owner, Handle hndl, const char[] error, any client) {
-  if (client) {
-    if(hndl != null) {
-      if(StrEqual("", error)) {
-        char Name[32];
-        Panel top = new Panel();
-        char Value[64];
-        int points = 0;
-        int number = 0;
-        Format(Value, sizeof(Value), "Top players", client);
-        top.SetTitle(Value);
-        while (SQL_FetchRow(hndl)) {
-          SQL_FetchString(hndl, 1, Name, sizeof(Name));
-          points = SQL_FetchInt(hndl, 2);
-          ReplaceString(Name, sizeof(Name), "&lt;", "<");
-          ReplaceString(Name, sizeof(Name), "&gt;", ">");
-          ReplaceString(Name, sizeof(Name), "&#37;", "%");
-          ReplaceString(Name, sizeof(Name), "&#61;", "=");
-          ReplaceString(Name, sizeof(Name), "&#42;", "*");
-          number++;
-          Format(Value, sizeof(Value), "%i %s (%i)" ,number, Name, points);
-          top.DrawText(Value);
-        }
-        Format(Value, sizeof(Value), "Close", client);
-        top.DrawItem(Value);
-        top.Send(client, RankPanelHandler, 20);
-        delete top;
-      } else {
-        LogError("Query failed (DisplayTop): %s", error);
-      }
-    }
+void RenderTop(DBResultSet results, int client, const char[] title) {
+  char buffer_name[MAX_LINE_WIDTH];
+  Panel top = new Panel();
+  char buffer_value[64];
+  int points = 0;
+  int number = 0;
+  top.SetTitle(title);
+  while (results.FetchRow()) {
+    results.FetchString(1, buffer_name, sizeof(buffer_name));
+    points = results.FetchInt(2);
+    ReplaceString(buffer_name, sizeof(buffer_name), "&lt;", "<");
+    ReplaceString(buffer_name, sizeof(buffer_name), "&gt;", ">");
+    ReplaceString(buffer_name, sizeof(buffer_name), "&#37;", "%");
+    ReplaceString(buffer_name, sizeof(buffer_name), "&#61;", "=");
+    ReplaceString(buffer_name, sizeof(buffer_name), "&#42;", "*");
+    number++;
+    Format(buffer_value, sizeof(buffer_value), "%i. %s (%i points)", number, buffer_name, points);
+    top.DrawText(buffer_value);
   }
+  top.DrawItem("Close");
+  top.Send(client, RankPanelHandler, 20);
+  delete top;
+}
+
+public void DisplayTop(Database db, DBResultSet results, const char[] error, int client) {
+  if (!db || !results || error[0]) {
+    LogError("[STATS(DisplayTop)] Failed to query (error: %s)", error);
+    PrintToChat(client, "\x04[\x05STATS\x04]\x01 Something it's wrong, please report to Aleexxx :'v");
+  } else {
+    RenderTop(results, client, "Top players:");
+  }
+  while (results.FetchMoreResults()) {}
 }
 
 public Action cmdNextRank(int client, int args) {
@@ -1020,7 +1017,7 @@ public Action cmdNextRank(int client, int args) {
     if (Players[client].rank == 1) {
       next.SetTitle("You are 1st");
     } else {
-      Format(buffer, sizeof(buffer), "Next Rank: %d", (Players[client].rank + 1));
+      Format(buffer, sizeof(buffer), "Next rank: %d", (Players[client].rank + 1));
       next.SetTitle(buffer);
       Format(buffer, sizeof(buffer), "Points required: %d", Players[client].points_for_next_rank);
       next.DrawText(buffer);
@@ -1032,47 +1029,24 @@ public Action cmdNextRank(int client, int args) {
     next.Send(client, NextRankPanelHandler, 20);
     delete next;
   } else if(IsFromStaff(client)) {
-    CPrintToChat(client, "Sorry dude, you are part of the staff");
+    CPrintToChat(client, "Sorry {blue}dude\x01 but you are part of the {blue}staff");
   } else {
     CPrintToChat(client, "We can't fetch your data");
   }
   return Plugin_Handled;
 }
 
-public void DisplayFullNextRank(Handle owner, Handle hndl, const char[] error, any client) {
-  if (client) {
-    if(hndl != null) {
-      if(StrEqual("", error)) {
-        char Name[32];
-        int Points = 0;
-        Panel fnext = new Panel();
-        char Value[128];
-        Format(Value, sizeof(Value), "Next Rank List:", client);
-        fnext.SetTitle(Value);
-        while (SQL_FetchRow(hndl)) {
-          SQL_FetchString(hndl, 0, Name, sizeof(Name));
-          Points = SQL_FetchInt(hndl, 1);
-          ReplaceString(Name, sizeof(Name), "&lt;", "<");
-          ReplaceString(Name, sizeof(Name), "&gt;", ">");
-          ReplaceString(Name, sizeof(Name), "&#37;", "%");
-          ReplaceString(Name, sizeof(Name), "&#61;", "=");
-          ReplaceString(Name, sizeof(Name), "&#42;", "*");
-          Format(Value, sizeof(Value), "%d points: %s", client, Points, Name);
-          fnext.DrawText(Value);
-        }
-        Format(Value, sizeof(Value), "Close", client);
-        fnext.DrawItem(Value);
-        fnext.Send(client, RankPanelHandler, 20);
-        delete fnext;
-      } else {
-        LogError("Query failed (DisplayFullNextRank): %s", error);
-      }
-    }
+public void DisplayFullNextRank(Database db, DBResultSet results, const char[] error, int client) {
+  if (!db || !results || error[0]) {
+    LogError("[STATS(DisplayFullNextRank)] Failed to query (error: %s)", error);
+    PrintToChat(client, "\x04[\x05STATS\x04]\x01 Something it's wrong, please report to Aleexxx :'v");
+  } else {
+    RenderTop(results, client, "Next rank list:");
   }
+  while (results.FetchMoreResults()) {}
 }
 
-public int RankPanelHandler(Menu menu, MenuAction action, int param1, int param2)
-{
+public int RankPanelHandler(Menu menu, MenuAction action, int param1, int param2) {
 
 }
 
@@ -1084,7 +1058,7 @@ public int NextRankPanelHandler(Menu panel, MenuAction action, int client, int o
     {
       char query[128];
       Format(query, sizeof(query), "CALL PLAYER_NEXT_RANK('%s', %i);", Players[client].authid, Players[client].points);
-      SQL_TQuery(g_database, DisplayFullNextRank, query, client, DBPrio_Low);
+      g_database.Query(DisplayFullNextRank, query, client, DBPrio_Low);
     }
   }
   return 0;
@@ -1098,9 +1072,9 @@ public void ShowRankTarget(int sender, int target) {
 
 public Action cmdPoints(int client, int args) {
   if(CheckCommandAccess(client, "sm_fk", ADMFLAG_RESERVATION, true)) {
-    PrintToChat(client, "Your points: %d , Your map points: %d, Your vip points: %d", Players[client].points, Players[client].new_points, calculatePointsForVip(client));
+    CPrintToChat(client, "Your points: {blue}%d\x01, Your map points: {blue}%d\x01, Your vip points: {blue}%d", Players[client].points, Players[client].new_points, calculatePointsForVip(client));
   } else {
-    PrintToChat(client, "Your points: %d , Your map points: %d", Players[client].points, Players[client].new_points);
+    CPrintToChat(client, "Your points: {blue}%d\x01, Your map points: {blue}%d", Players[client].points, Players[client].new_points);
   }
   return Plugin_Handled;
 }
@@ -1120,20 +1094,20 @@ public Action cmdColors(int client, int args)
 
 public Action cmdPlaytime(int client, int args) {
   if(client) {
-    PrintToChat(client, "Your playtime on this map: %d", Players[client].getTimeInMatch());
+    CPrintToChat(client, "Your playtime on this map: {blue}%d", Players[client].getTimeInMatch());
   }
 }
 
 
-public Action cmdFactor(int client, int args)
-{
-  if (client)
-  {
-    PrintToChat(client, "\x05Your assistance factor: \x04%.2f", Players[client].factor);
-    PrintToChat(client, "\x05Your bonus points: \x04%d", Players[client].bonus_points);
-  }
-  return Plugin_Handled;
-}
+// public Action cmdFactor(int client, int args)
+// {
+  // if (client)
+  // {
+    // PrintToChat(client, "\x05Your assistance factor: \x04%.2f", Players[client].factor);
+    // PrintToChat(client, "\x05Your bonus points: \x04%d", Players[client].bonus_points);
+  // }
+  // return Plugin_Handled;
+// }
 
 public Action cmdMapTop(int client, int args){
   RenderMatchInfo(client, false);
@@ -1625,4 +1599,10 @@ public Action OnMessage(int client, int args) {
     return Plugin_Handled;
   }
   return Plugin_Continue;
+}
+
+
+public void OnPluginEnd() {
+  UpdatePlayersStats(false);
+  OnPluginEndDamage();
 }

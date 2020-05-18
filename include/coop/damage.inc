@@ -145,7 +145,7 @@ public void DamageOnPluginStart()
   }
 }
 
-public void OnPluginEnd() // updated, thx Sheepdude
+void OnPluginEndDamage() // updated, thx Sheepdude
 {
   for (int x = 1; x <= MaxClients ; x++)
   {

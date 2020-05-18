@@ -23,6 +23,7 @@ BEGIN
         -- Obteniendo la informacion del jugador
         SELECT
           IF(B.id IS NOT NULL , 1, 0) AS is_banned,
+          IF(B.dt_ban_expiration IS NULL, "permanent", DATE_FORMAT(B.dt_ban_expiration, "%W, %M %d, %Y %I:%i %p")) AS ban_time,
           BS.description AS ban_reason,
           P.kill_bosses,
           0 AS factor,
@@ -70,6 +71,7 @@ BEGIN
         -- Seleccionando informacion necesaria para su union al servidor
         SELECT
           IF(B.id IS NOT NULL , 1, 0) AS is_banned,
+          IF(B.dt_ban_expiration IS NULL, "permanent", DATE_FORMAT(B.dt_ban_expiration, "%W, %M %d, %Y %I:%i %p")) AS ban_time,
           BS.description AS ban_reason,
           P.kill_bosses, 
           0 AS factor,

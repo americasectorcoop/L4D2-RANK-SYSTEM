@@ -306,7 +306,7 @@ stock void PlayerFetch(int client) {
 }
 
 public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, int client) {
-  if (db == null || results == null) {
+  if (!db || !results || error[0]) {
     LogError("Query failed! %s", error);
     return;
   } else if (results.RowCount == 0) {
@@ -314,32 +314,41 @@ public void OnPlayerFetch(Database db, DBResultSet results, const char[] error, 
   } else {
     while (results.FetchRow()) {
       // 0 is_banned
-      // 1 ban_reason
-      // 2 kill_bosses
-      // 3 factor
-      // 4 points
-      // 5 playtime
-      // 6 rank
-      // 7 points_for_next_rank
-      // 8 flags
+      // 1 ban_time
+      // 2 ban_reason
+      // 3 kill_bosses
+      // 4 factor
+      // 5 points
+      // 6 playtime
+      // 7 rank
+      // 8 points_for_next_rank
+      // 9 flags
       int is_banned = results.FetchInt(0);
       if(is_banned) {
         PlayerReset(client);
-        char reason[255], hostname[96];
-        results.FetchString(1, reason, 255);
+        char reason[255], hostname[96], time_legth[255];
+        results.FetchString(1, time_legth, 255);
+        results.FetchString(2, reason, 255);
         FindConVar("hostname").GetString(hostname, 96);
-        KickClient(client, "%s\n\nYou have been banned because: %s,\n\n Please visit: %s", hostname, reason, BANS_URL);
+        KickClient(
+          client,
+          "%s\n\nYou have been banned because: %s,\n\nExpire at: %s\n\nPlease visit: %s",
+          hostname,
+          reason,
+          time_legth,
+          BANS_URL
+        );
         return;
       }
-      Players[client].kill_bosses = results.FetchInt(2);
-      Players[client].factor = results.FetchFloat(3);
-      Players[client].points = results.FetchInt(4);
-      Players[client].playtime = results.FetchInt(5);
-      Players[client].rank = results.FetchInt(6);
-      Players[client].points_for_next_rank = results.FetchInt(7);
+      Players[client].kill_bosses = results.FetchInt(3);
+      Players[client].factor = results.FetchFloat(4);
+      Players[client].points = results.FetchInt(5);
+      Players[client].playtime = results.FetchInt(6);
+      Players[client].rank = results.FetchInt(7);
+      Players[client].points_for_next_rank = results.FetchInt(8);
       char flags[10];
-      results.FetchString(8, flags, 10);
-      int immunity = results.FetchInt(9);
+      results.FetchString(9, flags, 10);
+      int immunity = results.FetchInt(10);
       Players[client].assignFlags(flags, immunity);
       Players[client].announce();
       Players[client].renderColor();
